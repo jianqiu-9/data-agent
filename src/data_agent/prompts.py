@@ -183,7 +183,8 @@ $output_rules
 工具结果：$tool_results
 
 执行顺序：
-1. 调用 check_permission，必须传入 user_id、resource、action 和 env。
+1. 调用 check_permission；当前 user_id 由 HTTP 请求头 X-User-Id 传递，
+   业务参数只传 resource、action 和 env。
 2. 无权限时调用 recommend_permission。
 3. 调用 get_permission_history 检查是否存在历史或已过期权限。
 4. 只根据权限中心结果下结论。
@@ -210,9 +211,11 @@ $output_rules
 执行顺序：
 1. 从实体与上下文补全 resource、action、env、duration_days 和 reason。
 2. 调用 recommend_permission 获取角色、期限和审批人建议。
-3. 先展示完整预览，并调用人工确认中断。
-4. 只有用户确认后才调用 create_permission_ticket。
-5. 如果原任务正在等待权限，保存 pending_task，审批通过后继续原任务。
+3. 先询问“是否同意一键提单”，用户同意后继续。
+4. 弹出申请期限 7/15/30 天并等待选择。
+5. 调用 get_user_roles；多个角色时弹出角色选择，单角色自动选择。
+6. 只有完成以上选择后才调用 create_permission_ticket。
+7. 如果原任务正在等待权限，保存 pending_task，审批通过后继续原任务。
 
 输出：
 - 资源、权限、环境、期限、理由、预计审批人。

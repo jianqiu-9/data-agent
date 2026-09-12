@@ -219,6 +219,9 @@
           熟悉 Spring Boot、MyBatis/MyBatis-Plus 等后端开发体系，具备领域模型设计、接口契约管理、数据模型设计、状态机流转及复杂业务流程编排经验。
         </li>
         <li>
+          熟悉 Python、LangGraph、LangChain Core、Pydantic、HTTPX 和 Pytest，具备基于状态图编排多工具 AI Agent、Prompt 工程、人在回路确认、任务状态恢复及 REST 工具接入经验。
+        </li>
+        <li>
           熟悉 MySQL、Redis、Kafka/RocketMQ、Zookeeper、Apollo、XXL-Job 等中间件，具备数据库性能优化、缓存治理、消息异步解耦、分布式任务调度和配置中心治理经验。
         </li>
         <li>
@@ -251,6 +254,20 @@
 
     <section>
       <h2>代表项目</h2>
+
+      <div class="project">
+        <div class="project-title">
+          <span>企业级数据平台 Data Agent｜独立设计与开发（个人项目）</span>
+          <span>2026 年 8 月 - 2026 年 9 月</span>
+        </div>
+        <div class="stack"><strong>技术栈：</strong>Python、LangGraph、LangChain Core、Pydantic、HTTPX、Pytest、REST API、Prompt Engineering。</div>
+        <ul>
+          <li>面向已具备 SQL 能力的数据研发、数据分析和业务用户，设计并独立实现企业数据平台智能助手，将数据目录、元数据、权限中心、工单系统、SQL 审计和查询引擎等分散能力统一编排；支持自然语言找表、表/字段/指标解释、权限查询与申请、SQL 诊断优化、只读查询、结果解释和审批辅助。</li>
+          <li>基于 LangGraph StateGraph 设计 17 类意图路由、条件分支、检查点和任务状态，使用 interrupt 实现权限申请的人在回路确认；查询无权限时保存 pending_task，工单审批通过后自动重新校验权限并恢复原 SQL 查询。</li>
+          <li>直接实现 Agent 所需的 31 个 REST 工具接口和 Pydantic 请求契约，覆盖数据资产、权限、工单、SQL、Query 和审批服务；提供 HTTP 与内存双适配器，支持通过配置接入真实企业数据平台，同时保留可离线运行的演示环境。</li>
+          <li>完善 17 类业务 Prompt、系统约束和可选 LLM 意图路由，所有事实结论严格要求来自工具结果；实现 SQL 只读白名单、逐表权限检查、DDL/索引/统计信息与 EXPLAIN 自动补全、索引和 JOIN 优化、工单风险分析、全链路审计以及 39 项自动化测试。</li>
+        </ul>
+      </div>
 
       <div class="project">
         <div class="project-title">

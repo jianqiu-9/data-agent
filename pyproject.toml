@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=8,<10",
 ]
+llm = [
+    "langchain-openai>=1.0,<2",
+]
 
 [project.scripts]
 data-agent = "data_agent.cli:main"

@@ -26,7 +26,7 @@
 | 安全 | 默认只允许 `SELECT`，阻止 DML/DDL、多语句和 export 静默执行，写操作必须人工确认 |
 | 审计 | 每次工具调用记录时间、用户、会话、任务、意图、请求、响应、延迟、SQL、工单和查询 ID |
 | Prompt | 17 类意图均有独立 Prompt，包含执行顺序、事实约束、输出格式和风险规则 |
-| 接口 | 31 个平台工具都有明确 REST 方法、路径和请求模型；支持本地内存适配器和真实 HTTP 适配器 |
+| 接口 | 31 个平台工具都有明确 REST 方法、路径和请求模型；所有请求通过 `X-User-Id` 请求头传递当前用户 |
 
 ## 架构
 
@@ -57,6 +57,7 @@ src/data_agent/
 ├── graph.py             LangGraph StateGraph、条件路由、检查点、Runtime
 ├── nodes.py             所有 Agent 节点和人工确认续跑逻辑
 ├── routing.py           规则路由、可选 LLM 路由和实体抽取
+├── llm.py               LLM 环境配置、模型构建和路由注入
 ├── prompts.py           系统 Prompt、路由 Prompt、17 类业务 Prompt
 ├── state.py             LangGraph AgentState / Task State
 ├── models.py            意图、资源、权限动作、环境和审计模型
@@ -69,6 +70,9 @@ src/data_agent/
 │   └── http.py          可直接接入真实平台的 HTTP 实现
 ├── cli.py               命令行入口
 └── __main__.py          python -m data_agent 入口
+
+uml/
+└── all.puml             全流程 PlantUML 时序图
 ```
 
 ## LangGraph 路由
@@ -95,18 +99,22 @@ src/data_agent/
 | `approval_risk` | `approval_risk` | `get_ticket_context`、`analyze_risk`、`get_approval_history` |
 | `unknown` | `unknown` | 无 |
 
-权限申请使用 LangGraph `interrupt`：
+权限申请使用 LangGraph `interrupt`，无权限时弹出三步选择：
 
 ```text
 用户请求
   ↓
 recommend_permission
   ↓
-展示申请预览
+interrupt 1：是否同意一键提单？
   ↓
-interrupt 等待人工确认
+用户同意
   ↓
-用户确认
+interrupt 2：选择申请期限 7 / 15 / 30 天
+  ↓
+get_user_roles
+  ├── 多个角色 → interrupt 3：选择为哪个角色申请
+  └── 一个角色 → 自动选择
   ↓
 create_permission_ticket
 ```
@@ -124,9 +132,13 @@ batch_check_permission
           ↓
       保存 pending_task.sql
           ↓
-      生成权限申请预览
+      弹出“是否同意一键提单”
           ↓
-      用户确认并创建工单
+      选择 7 / 15 / 30 天
+          ↓
+      多角色时选择角色
+          ↓
+      创建工单
           ↓
       审批通过
           ↓
@@ -191,6 +203,18 @@ updated_at
 `HttpPlatformAdapter` 已直接写出所有 Agent 所需接口。生产环境只需配置平台地址和
 Token，不需要再编写一层抽象调用。
 
+### 用户身份传递
+
+所有 HTTP 请求统一携带：
+
+```http
+X-User-Id: u123
+```
+
+`ToolRegistry` 在调用工具前通过 `HttpPlatformAdapter.bind_user(user_id)` 绑定当前
+用户上下文。权限检查、批量权限检查、创建工单、查询执行等接口不再把 `user_id`
+或 `applicant_id` 放进 query string / JSON body。
+
 ### 数据目录
 
 | 工具 | 方法 | 路径 | 请求 |
@@ -207,13 +231,13 @@ Token，不需要再编写一层抽象调用。
 
 | 工具 | 方法 | 路径 | 请求 |
 | --- | --- | --- | --- |
-| `check_permission` | `POST` | `/api/v1/tools/permission/check` | `user_id`、`resource`、`action`、`env` |
-| `batch_check_permission` | `POST` | `/api/v1/tools/permission/batch-check` | `user_id`、`checks` |
-| `get_user_roles` | `GET` | `/api/v1/users/{user_id}/roles` | 用户 ID |
+| `check_permission` | `POST` | `/api/v1/tools/permission/check` | Header `X-User-Id`、`resource`、`action`、`env` |
+| `batch_check_permission` | `POST` | `/api/v1/tools/permission/batch-check` | Header `X-User-Id`、`checks` |
+| `get_user_roles` | `GET` | `/api/v1/users/me/roles` | Header `X-User-Id` |
 | `get_role_detail` | `GET` | `/api/v1/roles/{role_id}` | 角色 ID |
-| `get_permission_history` | `GET` | `/api/v1/users/{user_id}/permission-history` | `role_id`、`resource_id` |
-| `recommend_permission` | `POST` | `/api/v1/tools/permission/recommend` | 用户、资源、动作、环境、任务目标 |
-| `create_permission_ticket` | `POST` | `/api/v1/tools/permission/tickets` | `applicant_id`、`application` |
+| `get_permission_history` | `GET` | `/api/v1/users/me/permission-history` | Header `X-User-Id`、`role_id`、`resource_id` |
+| `recommend_permission` | `POST` | `/api/v1/tools/permission/recommend` | Header `X-User-Id`、资源、动作、环境、任务目标 |
+| `create_permission_ticket` | `POST` | `/api/v1/tools/permission/tickets` | Header `X-User-Id`、角色、资源、期限和理由 |
 | `get_ticket_status` | `GET` | `/api/v1/tools/permission/tickets/{ticket_id}` | 工单 ID |
 
 ### SQL
@@ -233,7 +257,7 @@ Token，不需要再编写一层抽象调用。
 
 | 工具 | 方法 | 路径 | 请求 |
 | --- | --- | --- | --- |
-| `execute_query` | `POST` | `/api/v1/tools/query/execute` | `user_id`、`sql`、`env` |
+| `execute_query` | `POST` | `/api/v1/tools/query/execute` | Header `X-User-Id`、`sql`、`env` |
 | `get_query_status` | `GET` | `/api/v1/tools/query/{query_id}/status` | 查询 ID |
 | `get_query_result` | `GET` | `/api/v1/tools/query/{query_id}/result` | 查询 ID |
 | `cancel_query` | `POST` | `/api/v1/tools/query/{query_id}/cancel` | 查询 ID |
@@ -243,7 +267,7 @@ Token，不需要再编写一层抽象调用。
 | 工具 | 方法 | 路径 | 请求 |
 | --- | --- | --- | --- |
 | `get_ticket_context` | `GET` | `/api/v1/tools/approval/tickets/{ticket_id}/context` | 工单 ID |
-| `check_duplicate_permission` | `POST` | `/api/v1/tools/approval/tickets/{ticket_id}/check-duplicate` | `applicant_id`、`application` |
+| `check_duplicate_permission` | `POST` | `/api/v1/tools/approval/tickets/{ticket_id}/check-duplicate` | Header `X-User-Id`、`application` |
 | `analyze_risk` | `POST` | `/api/v1/tools/approval/tickets/{ticket_id}/risk` | `ticket`、`context` |
 | `get_approval_history` | `GET` | `/api/v1/tools/approval/tickets/{ticket_id}/history` | 工单 ID |
 
@@ -256,8 +280,8 @@ Token，不需要再编写一层抽象调用。
 
 ```json
 POST /api/v1/tools/permission/check
+Header: X-User-Id: u123
 {
-  "user_id": "u123",
   "resource": {
     "type": "table",
     "database": "dw",
@@ -272,8 +296,8 @@ POST /api/v1/tools/permission/check
 
 ```json
 POST /api/v1/tools/permission/tickets
+Header: X-User-Id: u123
 {
-  "applicant_id": "u123",
   "role_id": "r_sales_analyst",
   "resource": {
     "type": "table",
@@ -293,8 +317,8 @@ POST /api/v1/tools/permission/tickets
 
 ```json
 POST /api/v1/tools/query/execute
+Header: X-User-Id: u123
 {
-  "user_id": "u123",
   "sql": "SELECT dt, region, order_count FROM dw.dws_sales_daily WHERE dt >= '2026-09-01'",
   "env": "prod"
 }
@@ -315,7 +339,7 @@ POST /api/v1/tools/query/execute
 | `column_explain` | 字段解释和比较 | 必须获取字段元数据，禁止根据名称推断定义 |
 | `metric_explain` | 指标口径 | 优先标准 Metric Definition |
 | `permission_check` | 权限和原因解释 | 权限结论只来自 Permission Center |
-| `permission_apply` | 权限申请 | 预览、人工确认、确认后创建工单 |
+| `permission_apply` | 权限申请 | 一键提单确认、7/15/30 天期限选择、多角色选择后创建工单 |
 | `permission_history` | 历史权限 | 区分有效、审批中和过期记录 |
 | `ticket_status` | 工单状态和续跑 | 只有 approved 才恢复原任务 |
 | `role_explain` | 角色解释 | 作用域和边界来自角色元数据 |
@@ -356,8 +380,35 @@ answer_prompt = render_prompt(
 
 ## 可选 LLM 路由
 
-默认 `RuleBasedIntentRouter` 可以完全离线运行。如果已有 LangChain Chat Model，
-可注入 `LlmIntentRouter`：
+默认 `RuleBasedIntentRouter` 可以完全离线运行。启用 LLM 时，通过环境变量或 CLI
+配置 OpenAI-compatible Chat Model：
+
+```bash
+export DATA_AGENT_LLM_ENABLED=true
+export DATA_AGENT_LLM_PROVIDER=openai
+export DATA_AGENT_LLM_MODEL=gpt-5
+export DATA_AGENT_LLM_API_KEY=replace-with-your-key
+export DATA_AGENT_LLM_BASE_URL=https://api.openai.com/v1
+export DATA_AGENT_LLM_TEMPERATURE=0
+export DATA_AGENT_LLM_TIMEOUT_SECONDS=30
+export DATA_AGENT_LLM_MIN_CONFIDENCE=0.55
+```
+
+对应 CLI 参数：
+
+```bash
+.venv/bin/python main.py chat \
+  --llm-enabled \
+  --llm-provider openai \
+  --llm-model gpt-5 \
+  --llm-api-key replace-with-your-key \
+  --llm-base-url https://api.openai.com/v1 \
+  --llm-temperature 0 \
+  --llm-timeout-seconds 30 \
+  --llm-min-confidence 0.55
+```
+
+也可以直接注入已有 LangChain Chat Model：
 
 ```python
 from langchain_openai import ChatOpenAI
@@ -377,12 +428,20 @@ runtime = DataAgentRuntime(
 ```
 
 模型输出不是合法 JSON、低于置信度阈值或调用失败时，会自动回退到规则路由。
+LLM 配置定义在 `src/data_agent/llm.py`，支持 `openai` 和
+`openai_compatible` Provider。
 
 ## 安装
 
 ```bash
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"
+```
+
+启用 LLM 时安装可选依赖：
+
+```bash
+.venv/bin/pip install -e ".[dev,llm]"
 ```
 
 运行测试：
@@ -393,15 +452,21 @@ python -m venv .venv
 
 ## 本地演示
 
-交互式对话：
+最终用户不需要理解 `ask` 和 `chat`，CLI 会自动判断：
+
+```bash
+# 没有任何参数：默认进入交互式多轮对话
+.venv/bin/python main.py
+
+# 直接输入一句话：自动按单轮 ask 处理
+.venv/bin/python main.py "dwd_order 是干嘛的？"
+```
+
+显式的开发和自动化命令仍然保留：
 
 ```bash
 .venv/bin/python main.py chat --user-id u123
-```
 
-单轮请求：
-
-```bash
 .venv/bin/python main.py ask "dwd_order 是干嘛的？" --user-id u123
 
 .venv/bin/python main.py ask "pay_amount 和 settle_amount 有什么区别？" --user-id u123
@@ -416,6 +481,31 @@ python -m venv .venv
 
 .venv/bin/python main.py ask "执行一下这个 SQL：SELECT dt, region, order_count FROM dw.dws_sales_daily WHERE dt >= '2026-09-01'" --user-id u123
 ```
+
+### Chat 空闲超时
+
+交互式 `chat` 默认在空闲 **10 分钟（600 秒）** 后自动结束，并在剩余
+120 秒时提醒用户。配置方式：
+
+```bash
+export DATA_AGENT_CHAT_IDLE_TIMEOUT_SECONDS=600
+export DATA_AGENT_CHAT_TIMEOUT_WARNING_SECONDS=120
+```
+
+也可以使用 CLI 参数：
+
+```bash
+.venv/bin/python main.py chat \
+  --chat-idle-timeout-seconds 600 \
+  --chat-timeout-warning-seconds 120
+```
+
+超时行为：
+
+- 只是结束当前交互式会话，不取消已提交的权限工单。
+- 权限确认、期限选择和角色选择弹窗同样受空闲超时保护。
+- 非 TTY 管道、脚本和自动化环境不强制空闲退出。
+- 配置持久化 Checkpointer 后，可以使用同一个 `session_id` 恢复任务状态。
 
 申请权限并自动确认：
 
@@ -432,6 +522,11 @@ export DATA_AGENT_ADAPTER=http
 export DATA_PLATFORM_BASE_URL=https://data-platform.example.com
 export DATA_PLATFORM_TOKEN=replace-with-your-token
 export DATA_PLATFORM_TIMEOUT_SECONDS=10
+
+export DATA_AGENT_LLM_ENABLED=true
+export DATA_AGENT_LLM_MODEL=gpt-5
+export DATA_AGENT_LLM_API_KEY=replace-with-your-key
+export DATA_AGENT_LLM_BASE_URL=https://api.openai.com/v1
 ```
 
 启动：
@@ -459,7 +554,7 @@ export DATA_PLATFORM_TIMEOUT_SECONDS=10
 2. 默认仅允许 `SELECT` 或 `WITH` 只读查询。
 3. `INSERT`、`UPDATE`、`DELETE`、DDL、多语句 SQL 会在执行前被拒绝。
 4. `export` 和 `download` 使用独立权限动作和更高风险等级，不继承普通查询权限。
-5. 权限工单必须经过 LangGraph 人工确认中断，Agent 不会自动替用户提交。
+5. 权限工单必须经过“一键提单确认、期限选择、角色选择”，Agent 不会静默提交。
 6. 敏感字段、生产环境、长期权限、越权范围和高风险操作进入审批风险规则。
 7. 查询没有 `WHERE`、使用 `SELECT *` 或涉及大表时会产生风险提示。
 8. SQL 优化只生成建议和 DDL，不直接执行 DDL。
@@ -514,10 +609,16 @@ runtime = DataAgentRuntime(
 
 ```text
 用户：执行 SELECT * FROM dwd_order WHERE dt='2026-09-01'
-Agent：没有权限，已生成申请预览并保存原查询任务。
+Agent：没有权限，是否同意一键提单？
 
-用户：确认提交
-Agent：创建工单 T202609120001。
+用户：同意
+Agent：请选择申请期限 7 / 15 / 30 天。
+
+用户：7 天
+Agent：当前用户有多个角色时，请选择申请角色。
+
+用户：销售域数据分析师
+Agent：创建工单 T202609120001，并保存原查询任务。
 
 审批完成后：
 用户：工单状态 T202609120001
@@ -534,6 +635,11 @@ runtime.chat(
 )
 
 runtime.resume(session_id="s001", approved=True)
+runtime.resume(session_id="s001", decision={"duration_days": 7})
+runtime.resume(
+    session_id="s001",
+    decision={"role_id": "r_sales_analyst"},
+)
 ```
 
 ## 测试覆盖
@@ -543,15 +649,17 @@ runtime.resume(session_id="s001", approved=True)
 - 意图路由和实体抽取。
 - 表、字段、指标和资产发现。
 - 权限正常检查和缺失解释。
-- LangGraph 权限申请中断与确认。
+- LangGraph 一键提单、7/15/30 天期限和多角色选择中断。
 - SQL 优化和 EXPLAIN/索引依据。
 - 只读查询权限拦截与成功执行。
 - 审批上下文、角色历史和风险。
 - 工单审批通过后恢复原查询。
 - 31 个 HTTP 工具实现完整性。
 - HTTP 方法、路径、参数和错误处理。
+- 所有 HTTP 请求的 `X-User-Id` 请求头和无 user_id 参数校验。
 - 17 类 Prompt 的完整性和可渲染性。
-- LLM 路由 JSON 解析和失败回退。
+- LLM 环境配置、模型构建、JSON 解析和失败回退。
+- `uml/all.puml` 全流程时序图关键节点。
 - CLI 真实平台适配器配置。
 
 ## 生产接入清单
@@ -566,3 +674,4 @@ runtime.resume(session_id="s001", approved=True)
 8. 对敏感字段实施脱敏、最小化和访问审计。
 9. 对 Prompt 和模型进行版本管理及离线评测。
 10. 监控任务完成率、权限自助解决率、SQL 优化采纳率和工具错误率。
+11. 在网关层校验 `X-User-Id` 与调用身份的一致性，防止用户伪造。

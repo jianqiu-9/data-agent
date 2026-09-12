@@ -78,7 +78,6 @@ def build_data_agent_graph(
         "explain_table",
         "explain_columns",
         "explain_metric",
-        "check_permission",
         "apply_permission",
         "permission_history",
         "explain_role",
@@ -93,6 +92,14 @@ def build_data_agent_graph(
         builder.add_edge(node, "finalize")
 
     builder.add_conditional_edges(
+        "check_permission",
+        _after_permission_check,
+        {
+            "request_permission": "apply_permission",
+            "finish": "finalize",
+        },
+    )
+    builder.add_conditional_edges(
         "ticket_status",
         _after_ticket_status,
         {
@@ -105,6 +112,7 @@ def build_data_agent_graph(
         _after_query_prepare,
         {
             "execute": "execute_query",
+            "request_permission": "apply_permission",
             "finish": "finalize",
         },
     )
@@ -119,7 +127,19 @@ def _route_intent(state: AgentState) -> str:
 
 
 def _after_query_prepare(state: AgentState) -> str:
-    return "execute" if state.get("_query_ready") else "finish"
+    if state.get("_query_ready"):
+        return "execute"
+    if state.get("_permission_offer_required"):
+        return "request_permission"
+    return "finish"
+
+
+def _after_permission_check(state: AgentState) -> str:
+    return (
+        "request_permission"
+        if state.get("_permission_offer_required")
+        else "finish"
+    )
 
 
 def _after_ticket_status(state: AgentState) -> str:
@@ -166,9 +186,17 @@ class DataAgentRuntime:
         )
         return self._turn_result(result)
 
-    def resume(self, *, session_id: str, approved: bool) -> dict[str, Any]:
+    def resume(
+        self,
+        *,
+        session_id: str,
+        approved: bool | None = None,
+        decision: Any | None = None,
+    ) -> dict[str, Any]:
+        if decision is None:
+            decision = {"approved": bool(approved)}
         result = self.graph.invoke(
-            Command(resume={"approved": approved}),
+            Command(resume=decision),
             config=self._config(session_id),
         )
         return self._turn_result(result)

@@ -31,6 +31,7 @@ class AgentState(TypedDict, total=False):
     response: dict[str, Any]
     _query_ready: bool
     _continue_query: bool
+    _permission_offer_required: bool
     messages: Annotated[list[dict[str, Any]], operator.add]
     audit_events: Annotated[list[dict[str, Any]], operator.add]
     tool_calls: Annotated[list[str], operator.add]

@@ -247,9 +247,13 @@ class AgentNodes:
             }
         answer = formatting.format_permission(result)
         if preview:
-            answer += "\n\n" + formatting.format_permission_preview(preview)
+            answer += (
+                f"\n\n当前没有 {result['resource']} 的 "
+                f"{result['env']} 环境 {result['action'].upper()} 权限，"
+                "是否同意一键提单？"
+            )
         response = self._response(
-            "permission_check",
+            "permission_required" if preview else "permission_check",
             answer,
             cards=[
                 {"card_type": "permission_result", **result},
@@ -277,6 +281,7 @@ class AgentNodes:
             "response": response,
             "permission_result": result,
             "permission_preview": preview,
+            "_permission_offer_required": bool(preview),
             "required_permissions": [
                 {"resource": resource, "action": action, "env": env}
             ],
@@ -320,14 +325,13 @@ class AgentNodes:
 
         confirmation = interrupt(
             {
-                "type": "permission_confirmation",
+                "type": "one_click_ticket_confirmation",
                 "preview": preview,
-                "message": "确认提交权限申请吗？",
+                "message": "是否同意一键提单？",
+                "options": ["yes", "no"],
             }
         )
-        confirmed = confirmation is True or (
-            isinstance(confirmation, dict) and confirmation.get("approved") is True
-        )
+        confirmed = self._confirmed(confirmation)
         if not confirmed:
             response = self._response(
                 "permission_apply",
@@ -340,13 +344,76 @@ class AgentNodes:
                 **batch.state_update(),
             }
 
+        duration_decision = interrupt(
+            {
+                "type": "permission_duration",
+                "options": [7, 15, 30],
+                "recommended": preview.get("duration_days", 7),
+                "message": "请选择申请期限",
+            }
+        )
+        duration_days = self._duration_decision(
+            duration_decision,
+            recommended=preview.get("duration_days", 7),
+        )
+        preview["duration_days"] = duration_days
+
+        role_result = batch.call("get_user_roles", user_id=state["user_id"])
+        roles = role_result.get("roles", [])
+        if not roles:
+            response = self._response(
+                "permission_apply",
+                "当前用户没有可用角色，无法自动创建权限工单。"
+                "请先联系管理员绑定角色后重试。",
+                data={"reason": "no_available_role", "preview": preview},
+            )
+            return {
+                "response": response,
+                "permission_preview": preview,
+                "_permission_offer_required": False,
+                **batch.state_update(),
+            }
+        selected_role_id = preview.get("role_id")
+        if len(roles) > 1:
+            role_decision = interrupt(
+                {
+                    "type": "permission_role",
+                    "roles": [
+                        {
+                            "role_id": role["role_id"],
+                            "role_name": role["role_name"],
+                            "meaning": role.get("meaning", ""),
+                            "business_domain": role.get("business_domain", ""),
+                        }
+                        for role in roles
+                    ],
+                    "message": "请选择为哪个角色申请权限",
+                }
+            )
+            selected_role_id = self._role_decision(role_decision, roles)
+        elif roles:
+            selected_role_id = roles[0]["role_id"]
+
+        if selected_role_id:
+            preview["role_id"] = selected_role_id
+            selected_role = next(
+                (
+                    role
+                    for role in roles
+                    if role.get("role_id") == selected_role_id
+                ),
+                None,
+            )
+            if selected_role:
+                preview["role_name"] = selected_role.get("role_name")
+
         application = {
             "resource": preview["resource"],
             "action": preview.get("action", action),
             "env": preview.get("env", env),
-            "duration_days": preview.get("duration_days", 30),
+            "duration_days": duration_days,
             "reason": preview.get("reason", state.get("business_goal", "")),
-            "role_id": preview.get("role_id"),
+            "role_id": selected_role_id,
             "approver": preview.get("approver"),
         }
         ticket = batch.call(
@@ -384,6 +451,7 @@ class AgentNodes:
             "response": response,
             "ticket": ticket,
             "permission_preview": None,
+            "_permission_offer_required": False,
             **batch.state_update(),
         }
 
@@ -674,6 +742,7 @@ class AgentNodes:
                 "pending_action": "query",
             },
             "_query_ready": False,
+            "_permission_offer_required": True,
             **batch.state_update(),
         }
 
@@ -926,3 +995,42 @@ class AgentNodes:
         self, state: AgentState, response_type: str, answer: str
     ) -> dict[str, Any]:
         return {"response": self._response(response_type, answer)}
+
+    @staticmethod
+    def _confirmed(decision: Any) -> bool:
+        if decision is True:
+            return True
+        if isinstance(decision, str):
+            return decision.strip().lower() in {"yes", "y", "true", "同意", "确认"}
+        if isinstance(decision, dict):
+            value = decision.get("approved", decision.get("confirmed"))
+            return AgentNodes._confirmed(value)
+        return False
+
+    @staticmethod
+    def _duration_decision(decision: Any, *, recommended: int) -> int:
+        allowed = {7, 15, 30}
+        if isinstance(decision, dict):
+            decision = decision.get("duration_days")
+        try:
+            duration = int(decision)
+        except (TypeError, ValueError):
+            duration = 0
+        fallback = int(recommended)
+        if fallback not in allowed:
+            fallback = 7
+        return duration if duration in allowed else fallback
+
+    @staticmethod
+    def _role_decision(decision: Any, roles: list[dict[str, Any]]) -> str:
+        if isinstance(decision, dict):
+            decision = decision.get("role_id")
+        value = str(decision or "").strip()
+        role_ids = {str(role["role_id"]) for role in roles}
+        if value in role_ids:
+            return value
+        if value.isdigit():
+            index = int(value) - 1
+            if 0 <= index < len(roles):
+                return str(roles[index]["role_id"])
+        return str(roles[0]["role_id"]) if roles else ""

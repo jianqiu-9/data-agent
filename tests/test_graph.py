@@ -2,6 +2,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from data_agent.adapters.memory import InMemoryPlatformAdapter
 from data_agent.graph import DataAgentRuntime
+from data_agent.adapters import memory
 
 
 def make_runtime() -> tuple[DataAgentRuntime, InMemoryPlatformAdapter]:
@@ -33,10 +34,18 @@ def test_permission_apply_interrupts_then_creates_ticket() -> None:
     )
 
     assert first["status"] == "interrupted"
-    assert first["interrupt"]["type"] == "permission_confirmation"
+    assert first["interrupt"]["type"] == "one_click_ticket_confirmation"
     assert first["interrupt"]["preview"]["duration_days"] == 7
 
-    resumed = runtime.resume(session_id="s-apply", approved=True)
+    duration = runtime.resume(session_id="s-apply", approved=True)
+    assert duration["status"] == "interrupted"
+    assert duration["interrupt"]["type"] == "permission_duration"
+    assert duration["interrupt"]["options"] == [7, 15, 30]
+
+    resumed = runtime.resume(
+        session_id="s-apply",
+        decision={"duration_days": 7},
+    )
 
     assert resumed["status"] == "completed"
     assert resumed["response"]["type"] == "permission_apply"
@@ -54,8 +63,8 @@ def test_query_stops_when_permission_is_missing_and_remembers_task() -> None:
         message=f"执行一下这个 SQL：{sql}",
     )
 
-    assert result["status"] == "completed"
-    assert result["response"]["type"] == "permission_required"
+    assert result["status"] == "interrupted"
+    assert result["interrupt"]["type"] == "one_click_ticket_confirmation"
     state = runtime.get_state(session_id="s-query-no-permission")
     assert state["pending_task"]["sql"] == sql
     assert state["pending_task"]["pending_action"] == "query"
@@ -134,15 +143,15 @@ def test_approved_ticket_resumes_pending_query() -> None:
         session_id=session_id,
         message=f"执行一下这个 SQL：{sql}",
     )
-    assert blocked["response"]["type"] == "permission_required"
+    assert blocked["status"] == "interrupted"
+    assert blocked["interrupt"]["type"] == "one_click_ticket_confirmation"
 
-    pending = runtime.chat(
-        user_id="u123",
+    duration = runtime.resume(session_id=session_id, approved=True)
+    assert duration["interrupt"]["type"] == "permission_duration"
+    created = runtime.resume(
         session_id=session_id,
-        message="申请",
+        decision={"duration_days": 7},
     )
-    assert pending["status"] == "interrupted"
-    created = runtime.resume(session_id=session_id, approved=True)
     ticket_id = created["response"]["data"]["ticket"]["ticket_id"]
 
     adapter.approve_ticket(ticket_id)
@@ -155,3 +164,65 @@ def test_approved_ticket_resumes_pending_query() -> None:
     assert continued["status"] == "completed"
     assert continued["response"]["type"] == "query_execute"
     assert "查询状态：succeeded" in continued["response"]["answer"]
+
+
+def test_multiple_roles_trigger_role_selection(monkeypatch) -> None:
+    monkeypatch.setitem(
+        memory.USER_ROLES,
+        "u_multi",
+        ["r_sales_analyst", "r_user_admin"],
+    )
+    runtime, _ = make_runtime()
+    session_id = "s-multi-role"
+
+    first = runtime.chat(
+        user_id="u_multi",
+        session_id=session_id,
+        message="帮我申请 dwd_order SELECT 权限，用于订单分析",
+    )
+    assert first["interrupt"]["type"] == "one_click_ticket_confirmation"
+
+    duration = runtime.resume(session_id=session_id, approved=True)
+    assert duration["interrupt"]["type"] == "permission_duration"
+
+    role = runtime.resume(
+        session_id=session_id,
+        decision={"duration_days": 15},
+    )
+    assert role["status"] == "interrupted"
+    assert role["interrupt"]["type"] == "permission_role"
+    assert {
+        item["role_id"] for item in role["interrupt"]["roles"]
+    } == {"r_sales_analyst", "r_user_admin"}
+
+    created = runtime.resume(
+        session_id=session_id,
+        decision={"role_id": "r_user_admin"},
+    )
+    assert created["status"] == "completed"
+    application = created["response"]["data"]["ticket"]["preview"]
+    assert application["role_id"] == "r_user_admin"
+    assert application["duration_days"] == 15
+
+
+def test_user_without_roles_does_not_create_ticket() -> None:
+    runtime, _ = make_runtime()
+    session_id = "s-no-role"
+
+    first = runtime.chat(
+        user_id="u_no_role",
+        session_id=session_id,
+        message="帮我申请 dwd_order SELECT 权限，用于订单分析",
+    )
+    assert first["interrupt"]["type"] == "one_click_ticket_confirmation"
+
+    duration = runtime.resume(session_id=session_id, approved=True)
+    assert duration["interrupt"]["type"] == "permission_duration"
+
+    result = runtime.resume(
+        session_id=session_id,
+        decision={"duration_days": 7},
+    )
+    assert result["status"] == "completed"
+    assert result["response"]["data"]["reason"] == "no_available_role"
+    assert "没有可用角色" in result["response"]["answer"]

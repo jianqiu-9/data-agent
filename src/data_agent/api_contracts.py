@@ -44,7 +44,6 @@ class RecommendDataAssetRequest(ApiRequest):
 
 
 class CheckPermissionRequest(ApiRequest):
-    user_id: str
     resource: dict[str, Any]
     action: str = "select"
     env: str = "prod"
@@ -57,12 +56,7 @@ class BatchPermissionItem(ApiRequest):
 
 
 class BatchCheckPermissionRequest(ApiRequest):
-    user_id: str
     checks: list[BatchPermissionItem]
-
-
-class GetUserRolesRequest(ApiRequest):
-    user_id: str
 
 
 class GetRoleDetailRequest(ApiRequest):
@@ -70,13 +64,11 @@ class GetRoleDetailRequest(ApiRequest):
 
 
 class GetPermissionHistoryRequest(ApiRequest):
-    user_id: str
     role_id: str | None = None
     resource: dict[str, Any] | None = None
 
 
 class RecommendPermissionRequest(ApiRequest):
-    user_id: str
     resource: dict[str, Any]
     action: str = "select"
     env: str = "prod"
@@ -84,7 +76,6 @@ class RecommendPermissionRequest(ApiRequest):
 
 
 class CreatePermissionTicketRequest(ApiRequest):
-    applicant_id: str
     role_id: str | None = None
     resource: dict[str, Any]
     action: str = "select"
@@ -133,7 +124,6 @@ class RewriteSqlRequest(OptimizeSqlRequest):
 
 
 class ExecuteQueryRequest(ApiRequest):
-    user_id: str
     sql: str
     env: str = "prod"
 
@@ -155,7 +145,6 @@ class GetTicketContextRequest(ApiRequest):
 
 
 class CheckDuplicatePermissionRequest(ApiRequest):
-    applicant_id: str
     application: dict[str, Any]
 
 

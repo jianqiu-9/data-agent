@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from contextlib import AbstractContextManager
-from typing import Any
+from contextlib import AbstractContextManager, contextmanager
+from contextvars import ContextVar
+from typing import Any, Iterator
 from urllib.parse import quote
 
 import httpx
@@ -28,7 +29,6 @@ from data_agent.api_contracts import (
     GetTableDdlRequest,
     GetTicketContextRequest,
     GetTicketStatusRequest,
-    GetUserRolesRequest,
     MetricDefinitionRequest,
     OptimizeSqlRequest,
     ParseSqlRequest,
@@ -72,9 +72,9 @@ class PlatformEndpoints:
 
     CHECK_PERMISSION = "/api/v1/tools/permission/check"
     BATCH_CHECK_PERMISSION = "/api/v1/tools/permission/batch-check"
-    USER_ROLES = "/api/v1/users/{user_id}/roles"
+    USER_ROLES = "/api/v1/users/me/roles"
     ROLE_DETAIL = "/api/v1/roles/{role_id}"
-    PERMISSION_HISTORY = "/api/v1/users/{user_id}/permission-history"
+    PERMISSION_HISTORY = "/api/v1/users/me/permission-history"
     RECOMMEND_PERMISSION = "/api/v1/tools/permission/recommend"
     CREATE_PERMISSION_TICKET = "/api/v1/tools/permission/tickets"
     TICKET_STATUS = "/api/v1/tools/permission/tickets/{ticket_id}"
@@ -161,6 +161,7 @@ class HttpPlatformAdapter(
         timeout: float = 10.0,
         user_agent: str = "data-agent/0.2",
         client: httpx.Client | None = None,
+        user_id: str | None = None,
     ) -> None:
         headers = {"User-Agent": user_agent, "Accept": "application/json"}
         if token:
@@ -173,6 +174,10 @@ class HttpPlatformAdapter(
         )
         if client is not None:
             self._client.headers.update(headers)
+        self._user_id: ContextVar[str | None] = ContextVar(
+            f"data_agent_http_user_{id(self)}",
+            default=user_id,
+        )
 
     @classmethod
     def from_environment(cls) -> HttpPlatformAdapter:
@@ -190,6 +195,14 @@ class HttpPlatformAdapter(
 
     def __exit__(self, *args: Any) -> None:
         self.close()
+
+    @contextmanager
+    def bind_user(self, user_id: str) -> Iterator[HttpPlatformAdapter]:
+        token = self._user_id.set(user_id)
+        try:
+            yield self
+        finally:
+            self._user_id.reset(token)
 
     def search_data_assets(self, query: str, limit: int = 5) -> dict[str, Any]:
         request = SearchDataAssetsRequest(query=query, limit=limit)
@@ -260,7 +273,6 @@ class HttpPlatformAdapter(
         env: str,
     ) -> dict[str, Any]:
         request = CheckPermissionRequest(
-            user_id=user_id,
             resource=resource,
             action=action,
             env=env,
@@ -268,26 +280,25 @@ class HttpPlatformAdapter(
         return self._post(
             PlatformEndpoints.CHECK_PERMISSION,
             json=request.payload(),
+            user_id=user_id,
         )
 
     def batch_check_permission(
         self, user_id: str, checks: list[dict[str, Any]]
     ) -> dict[str, Any]:
         request = BatchCheckPermissionRequest(
-            user_id=user_id,
             checks=[BatchPermissionItem(**item) for item in checks],
         )
         return self._post(
             PlatformEndpoints.BATCH_CHECK_PERMISSION,
             json=request.payload(),
+            user_id=user_id,
         )
 
     def get_user_roles(self, user_id: str) -> dict[str, Any]:
-        GetUserRolesRequest(user_id=user_id)
         return self._get(
-            PlatformEndpoints.USER_ROLES.format(
-                user_id=self._quote(user_id)
-            )
+            PlatformEndpoints.USER_ROLES,
+            user_id=user_id,
         )
 
     def get_role_detail(self, role_id: str) -> dict[str, Any]:
@@ -305,20 +316,17 @@ class HttpPlatformAdapter(
         resource: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         request = GetPermissionHistoryRequest(
-            user_id=user_id,
             role_id=role_id,
             resource=resource,
         )
         params = request.payload()
-        params.pop("user_id", None)
         if resource:
             params["resource_id"] = self._resource_id(resource)
             params.pop("resource", None)
         return self._get(
-            PlatformEndpoints.PERMISSION_HISTORY.format(
-                user_id=self._quote(user_id)
-            ),
+            PlatformEndpoints.PERMISSION_HISTORY,
             params=params,
+            user_id=user_id,
         )
 
     def recommend_permission(
@@ -330,7 +338,6 @@ class HttpPlatformAdapter(
         task_goal: str,
     ) -> dict[str, Any]:
         request = RecommendPermissionRequest(
-            user_id=user_id,
             resource=resource,
             action=action,
             env=env,
@@ -339,13 +346,13 @@ class HttpPlatformAdapter(
         return self._post(
             PlatformEndpoints.RECOMMEND_PERMISSION,
             json=request.payload(),
+            user_id=user_id,
         )
 
     def create_permission_ticket(
         self, applicant_id: str, application: dict[str, Any]
     ) -> dict[str, Any]:
         request = CreatePermissionTicketRequest(
-            applicant_id=applicant_id,
             role_id=application.get("role_id"),
             resource=application["resource"],
             action=application.get("action", "select"),
@@ -358,6 +365,7 @@ class HttpPlatformAdapter(
         return self._post(
             PlatformEndpoints.CREATE_PERMISSION_TICKET,
             json=request.payload(),
+            user_id=applicant_id,
         )
 
     def get_ticket_status(self, ticket_id: str) -> dict[str, Any]:
@@ -437,13 +445,13 @@ class HttpPlatformAdapter(
         self, user_id: str, sql: str, env: str
     ) -> dict[str, Any]:
         request = ExecuteQueryRequest(
-            user_id=user_id,
             sql=sql,
             env=env,
         )
         return self._post(
             PlatformEndpoints.EXECUTE_QUERY,
             json=request.payload(),
+            user_id=user_id,
         )
 
     def get_query_status(self, query_id: str) -> dict[str, Any]:
@@ -485,7 +493,6 @@ class HttpPlatformAdapter(
         application: dict[str, Any],
     ) -> dict[str, Any]:
         request = CheckDuplicatePermissionRequest(
-            applicant_id=applicant_id,
             application=application,
         )
         ticket_id = str(application.get("ticket_id", "preview"))
@@ -494,6 +501,7 @@ class HttpPlatformAdapter(
                 ticket_id=self._quote(ticket_id)
             ),
             json=request.payload(),
+            user_id=applicant_id,
         )
 
     def analyze_risk(
@@ -523,16 +531,18 @@ class HttpPlatformAdapter(
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
-        return self._request("GET", path, params=params)
+        return self._request("GET", path, params=params, user_id=user_id)
 
     def _post(
         self,
         path: str,
         *,
         json: dict[str, Any],
+        user_id: str | None = None,
     ) -> dict[str, Any]:
-        return self._request("POST", path, json=json)
+        return self._request("POST", path, json=json, user_id=user_id)
 
     def _request(
         self,
@@ -541,12 +551,17 @@ class HttpPlatformAdapter(
         *,
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        user_id: str | None = None,
     ) -> dict[str, Any]:
+        request_user_id = user_id or self._user_id.get()
+        if not request_user_id:
+            raise RuntimeError("HTTP platform calls require a user_id")
         response = self._client.request(
             method,
             path,
             params=params,
             json=json,
+            headers={"X-User-Id": request_user_id},
         )
         if response.is_error:
             raise PlatformAPIError(

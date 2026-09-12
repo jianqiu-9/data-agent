@@ -88,7 +88,12 @@ class ToolRegistry:
         result: Any = None
         error: str | None = None
         try:
-            result = self._tools[tool](**request)
+            binder = getattr(self._services, "bind_user", None)
+            if callable(binder):
+                with binder(user_id):
+                    result = self._tools[tool](**request)
+            else:
+                result = self._tools[tool](**request)
             return ToolExecution(
                 tool=tool,
                 result=result,

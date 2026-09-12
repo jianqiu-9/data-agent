@@ -1,0 +1,492 @@
+@startuml
+title Data Agent：从用户发问到最终提交权限工单
+autonumber
+skinparam responseMessageBelowArrow true
+skinparam maxMessageSize 240
+skinparam sequenceMessageAlign center
+
+actor "用户" as User
+participant "CLI / Runtime API" as CLI
+participant "DataAgentRuntime.chat" as Runtime
+participant "LangGraph StateGraph" as Graph
+participant "AgentNodes" as Nodes
+participant "Intent Router" as Router
+participant "ToolBatch.call" as Batch
+participant "ToolRegistry.invoke" as Registry
+participant "HttpPlatformAdapter" as HTTP
+database "Data Catalog" as Catalog
+participant "Permission Center" as Permission
+participant "Ticket System" as Ticket
+participant "SQL Service" as SQL
+participant "Query Engine" as Query
+participant "LLM" as LLM
+participant "Checkpointer" as Store
+participant "Audit Sink" as Audit
+
+legend right
+  **身份规则**
+  所有 HTTP 调用由 ToolRegistry 绑定当前用户，
+  并在请求头携带 `X-User-Id`。
+  query/body 不再传递 user_id、applicant_id。
+
+  **权限申请中断**
+  1. 是否同意一键提单
+  2. 选择期限 7 / 15 / 30
+  3. 多个角色时选择角色
+end legend
+
+== 0. Chat 模式空闲超时 ==
+alt 交互式 chat 且 stdin 为 TTY
+  loop 等待用户输入
+    CLI --> User : 提示“你：”
+    alt 空闲达到 8 分钟（600-120 秒）
+      CLI --> User : 会话将在 120 秒后自动结束
+    else 用户输入问题
+      User --> CLI : 问题 / SQL / 工单号
+    else 空闲达到 10 分钟（600 秒）
+      CLI --> User : 会话空闲超时，自动结束
+      note right of CLI
+        不取消已提交的权限工单；
+        不主动删除 pending_task；
+        持久化 Checkpointer 可使用同一 session_id 恢复。
+      end note
+    end
+  end
+else ask 模式或非 TTY 自动化
+  note right of CLI
+    单轮 ask 或管道/脚本输入不启用空闲强制退出。
+  end note
+end
+
+== 1. 用户发问与运行时入口 ==
+User -> CLI : 输入自然语言问题、SQL 或工单号
+CLI -> Runtime : chat(user_id, session_id, message, context)
+Runtime -> Graph : invoke({user_id, session_id, message, context})
+Graph -> Store : 加载 thread_id=session_id 的历史状态
+Store --> Graph : messages / pending_task / permission_preview
+Graph -> Nodes : prepare(state)
+Nodes -> Nodes : 生成或复用 task_id，写入 business_goal
+Nodes --> Graph : updated state
+Graph -> Nodes : route(state)
+Nodes -> Router : route(message, context, state)
+
+alt DATA_AGENT_LLM_ENABLED=true
+  Router -> LLM : render_intent_prompt()
+  LLM --> Router : intent / confidence / entities JSON
+  alt JSON 非法、模型超时或 confidence < threshold
+    Router -> Router : LlmIntentRouter fallback
+    note right of Router
+      异常处理：自动调用 RuleBasedIntentRouter，
+      不中断整个 Agent 请求。
+    end note
+  end
+else 默认规则路由
+  Router -> Router : RuleBasedIntentRouter.route()
+end
+
+Router --> Nodes : IntentResult
+Nodes --> Graph : intent / entities / identified_resources
+Graph -> Graph : _route_intent(state)
+
+== 2. 进入权限申请相关的三条入口分支 ==
+alt intent=permission_check
+  Graph -> Nodes : check_permission(state)
+  note right of Nodes
+    入口：用户直接问“我有权限吗/为什么查不了”。
+    后续进入统一权限检查。
+  end note
+
+else intent=query_execute
+  Graph -> Nodes : prepare_query(state)
+  Nodes -> Batch : validate_sql(sql)
+  Batch -> Registry : invoke("validate_sql")
+  Registry -> HTTP : POST /api/v1/tools/sql/validate
+  note right of HTTP
+    Header: X-User-Id
+  end note
+  HTTP -> SQL : 校验是否为 SELECT/WITH
+  SQL --> HTTP : valid / errors / warnings
+  HTTP --> Registry : validation result
+  Registry -> Audit : 记录工具请求、响应、延迟
+  Registry --> Batch : ToolExecution
+  Batch --> Nodes : validation
+
+  alt SQL 校验失败
+    Nodes --> Graph : response=SQL 校验失败
+    Graph -> Nodes : finalize(state)
+    Nodes --> CLI : 返回错误，不执行 SQL
+    CLI --> User : DML/DDL/多语句等错误提示
+  else SQL 合法
+    Nodes -> Batch : parse_sql(sql)
+    Batch -> Registry : invoke("parse_sql")
+    Registry -> HTTP : POST /api/v1/tools/sql/parse
+    HTTP -> SQL : 解析 tables / joins / filters
+    SQL --> HTTP : parsed SQL
+    HTTP --> Registry : parsed result
+    Registry --> Batch : result
+    Batch --> Nodes : tables
+    Nodes -> Batch : batch_check_permission(checks)
+    Batch -> Registry : invoke("batch_check_permission")
+    Registry -> HTTP : POST /permission/batch-check
+    note right of HTTP
+      Header: X-User-Id
+      Body: checks
+    end note
+    HTTP -> Permission : 批量检查资源权限
+    Permission --> HTTP : all_granted / results
+    HTTP --> Registry : permission results
+    Registry --> Batch : result
+    Batch --> Nodes : permission results
+
+    alt 全部有权限
+      Nodes --> Graph : _query_ready=true
+      Graph -> Nodes : execute_query(state)
+      Nodes -> Batch : execute_query(sql, env)
+      Batch -> Registry : invoke("execute_query")
+      Registry -> HTTP : POST /query/execute
+      note right of HTTP
+        Header: X-User-Id
+        Body: sql / env
+      end note
+      HTTP -> Query : 执行只读 SQL
+      Query --> HTTP : rows / elapsed_ms / scanned_rows
+      HTTP --> Registry : query result
+      Registry --> Batch : result
+      Batch --> Nodes : query result
+      Nodes --> Graph : response=query_execute
+    else 至少一个资源无权限
+      Nodes -> Nodes : 选择第一个 missing resource
+      Nodes -> Batch : recommend_permission(resource)
+      Batch -> Registry : invoke("recommend_permission")
+      Registry -> HTTP : POST /permission/recommend
+      HTTP -> Permission : 推荐角色、期限、审批人
+      Permission --> HTTP : recommendation
+      HTTP --> Registry : recommendation
+      Registry --> Batch : result
+      Batch --> Nodes : preview
+      Nodes -> Store : 保存 pending_task.sql 和 pending_action=query
+      Nodes -> Nodes : _permission_offer_required=true
+      Nodes --> Graph : permission required
+      Graph -> Graph : _after_query_prepare()
+      Graph -> Nodes : apply_permission(state)
+    end
+  end
+
+else intent=permission_apply
+  Graph -> Nodes : apply_permission(state)
+  note right of Nodes
+    入口：用户明确说“帮我申请/开通权限”。
+    如果已有 permission_preview，直接复用。
+  end note
+end
+
+== 3. 权限检查分支：有权限与无权限 ==
+group 统一权限检查流程
+  alt permission_check 入口
+    Nodes -> Batch : check_permission(resource, action, env)
+    Batch -> Registry : invoke("check_permission")
+    Registry -> HTTP : POST /permission/check
+    note right of HTTP
+      Header: X-User-Id
+      Body: resource / action / env
+    end note
+    HTTP -> Permission : 查询用户授权记录
+    Permission --> HTTP : has_permission / role / expires_at / reason
+    HTTP --> Registry : result
+    Registry -> Audit : 审计权限检查
+    Registry --> Batch : result
+    Batch --> Nodes : permission result
+
+    alt 当前有权限
+      Nodes --> Graph : response=permission_check
+      Graph -> Graph : _after_permission_check()
+      Graph -> Nodes : finalize(state)
+      Nodes --> CLI : 有权限、有效期、来源角色
+      CLI --> User : 返回权限结果，不创建工单
+    else 当前无权限
+      Nodes -> Batch : recommend_permission()
+      Batch -> Registry : invoke("recommend_permission")
+      Registry -> HTTP : POST /permission/recommend
+      HTTP -> Permission : 推荐申请期限、审批人
+      Permission --> HTTP : recommendation
+      HTTP --> Registry : recommendation
+      Registry --> Batch : result
+      Batch --> Nodes : preview
+      Nodes -> Batch : get_permission_history()
+      Batch -> Registry : invoke("get_permission_history")
+      Registry -> HTTP : GET /users/me/permission-history
+      note right of HTTP
+        Header: X-User-Id
+        不传 user_id 查询参数
+      end note
+      HTTP -> Permission : 查询历史授权和过期记录
+      Permission --> HTTP : history
+      HTTP --> Registry : history
+      Registry --> Batch : result
+      Batch --> Nodes : history
+      Nodes -> Nodes : _permission_offer_required=true
+      Nodes --> Graph : permission required + preview
+      Graph -> Graph : _after_permission_check()
+      Graph -> Nodes : apply_permission(state)
+    end
+  end
+end
+
+== 4. 一键提单：交互分支与异常处理 ==
+group apply_permission：最终提交权限工单
+  alt preview 不存在
+    Nodes -> Batch : recommend_permission()
+    Batch -> Registry : invoke("recommend_permission")
+    Registry -> HTTP : POST /permission/recommend
+    HTTP -> Permission : 生成申请建议
+    Permission --> HTTP : recommendation
+    HTTP --> Registry : recommendation
+    Registry --> Batch : result
+    Batch --> Nodes : preview
+  else preview 已存在
+    Nodes -> Nodes : 复用 permission_preview
+  end
+
+  Nodes --> Graph : interrupt(one_click_ticket_confirmation)
+  note right of Nodes
+    type=one_click_ticket_confirmation
+    message=是否同意一键提单
+    options=yes/no
+  end note
+  Graph --> CLI : interrupt payload
+  CLI --> User : 弹出“是否同意一键提单？”
+  User --> CLI : 同意 / 拒绝
+  CLI -> Graph : resume({approved})
+
+  alt 用户拒绝
+    Graph -> Nodes : apply_permission 恢复执行
+    Nodes --> Graph : response=已取消，不创建工单
+    Graph -> Nodes : finalize(state)
+    Nodes --> CLI : 取消结果
+    CLI --> User : 不创建工单，保留原任务上下文
+  else 用户同意
+    Nodes --> Graph : interrupt(permission_duration)
+    note right of Nodes
+      type=permission_duration
+      options=7/15/30
+      recommended=preview.duration_days
+    end note
+    Graph --> CLI : interrupt payload
+    CLI --> User : 弹出申请期限 7 / 15 / 30
+    User --> CLI : 选择期限
+    CLI -> Graph : resume({duration_days})
+    Graph -> Nodes : apply_permission 恢复执行
+    Nodes -> Nodes : _duration_decision()
+    note right of Nodes
+      正常：只接受 7/15/30。
+      CLI 输入非法：循环重新选择。
+      API 输入非法：回退允许范围内的 recommended，否则 7 天。
+    end note
+
+    Nodes -> Batch : get_user_roles()
+    Batch -> Registry : invoke("get_user_roles")
+    Registry -> HTTP : GET /users/me/roles
+    note right of HTTP
+      Header: X-User-Id
+      通过当前用户解析角色列表
+    end note
+    HTTP -> Permission : 查询用户角色
+    Permission --> HTTP : roles
+    HTTP --> Registry : roles
+    Registry -> Audit : 审计角色查询
+    Registry --> Batch : result
+    Batch --> Nodes : roles
+
+    alt roles 为空
+      Nodes --> Graph : response=没有可用角色，无法申请
+      Graph -> Nodes : finalize(state)
+      Nodes --> CLI : 提示绑定角色后重试
+      CLI --> User : 不创建无角色工单
+    else roles 只有一个
+      Nodes -> Nodes : 自动选择唯一 role_id
+      Nodes -> Nodes : 更新 preview.role_id / role_name
+    else roles 有多个
+      Nodes --> Graph : interrupt(permission_role)
+      note right of Nodes
+        type=permission_role
+        roles=[role_id, role_name, meaning, domain]
+      end note
+      Graph --> CLI : interrupt payload
+      CLI --> User : 弹出“请选择为哪个角色申请”
+      User --> CLI : 选择角色
+      CLI -> Graph : resume({role_id})
+      Graph -> Nodes : apply_permission 恢复执行
+      Nodes -> Nodes : _role_decision()
+      note right of Nodes
+        正常：使用 role_id。
+        CLI 输入非法：循环重新选择。
+        API 输入非法：回退第一个角色。
+      end note
+    end
+
+    Nodes -> Nodes : 合并 preview
+    note right of Nodes
+      application =
+      resource + action + env +
+      duration_days + reason +
+      role_id + approver
+    end note
+
+    Nodes -> Batch : create_permission_ticket(application)
+    Batch -> Registry : invoke("create_permission_ticket")
+    Registry -> Registry : bind_user(当前用户)
+    Registry -> HTTP : POST /permission/tickets
+    note right of HTTP
+      Header: X-User-Id
+      Body: role/resource/action/env/
+           duration/reason/approver
+      Body 不含 applicant_id/user_id
+    end note
+    HTTP -> Ticket : 创建权限工单
+
+    alt 创建成功
+      Ticket --> HTTP : ticket_id / pending / approval_url
+      HTTP --> Registry : ticket
+      Registry -> Audit : 审计工具调用、工单 ID、延迟
+      Registry --> Batch : result
+      Batch --> Nodes : ticket
+      Nodes -> Store : 保存 ticket / pending_task
+      Nodes --> Graph : response=permission_apply
+      Graph -> Nodes : finalize(state)
+      Nodes --> CLI : 工单号、状态、审批链接
+      CLI --> User : 最终提交完成
+    else HTTP 401 / 403
+      Ticket --> HTTP : unauthorized / forbidden
+      HTTP --> Registry : raise PlatformAPIError
+      Registry -> Audit : 记录 error、request、latency
+      Registry --> Batch : re-raise
+      Batch --> Nodes : exception
+      note right of Nodes
+        处理：不返回“创建成功”；
+        pending_task 和 preview 保留；
+        调用方可修正令牌/权限后重试。
+      end note
+    else HTTP 409：重复申请
+      Ticket --> HTTP : duplicate ticket / active permission
+      HTTP --> Registry : raise PlatformAPIError
+      Registry -> Audit : 记录重复申请
+      Registry --> Batch : re-raise
+      Batch --> Nodes : exception
+      note right of Nodes
+        处理：提示存在有效权限或待审批工单；
+        重新调用 check_permission 获取真实状态。
+      end note
+    else HTTP 5xx / 超时
+      Ticket --> HTTP : server error / timeout
+      HTTP --> Registry : raise PlatformAPIError / TimeoutException
+      Registry -> Audit : 记录错误和耗时
+      Registry --> Batch : re-raise
+      Batch --> Nodes : exception
+      note right of Nodes
+        处理：不本地伪造 ticket_id；
+        保留任务状态，由用户重试或平台幂等键去重。
+      end note
+    else 申请参数不合法
+      Ticket --> HTTP : 422 validation error
+      HTTP --> Registry : raise PlatformAPIError
+      Registry -> Audit : 记录非法申请
+      Registry --> Batch : re-raise
+      note right of Nodes
+        处理：回到权限申请流程，
+        重新选择 resource/action/env/duration/role。
+      end note
+    end
+  end
+end
+
+== 5. 工单提交后的状态与其他全流程分支 ==
+alt 后续查询工单状态
+  User -> CLI : 查询工单状态
+  CLI -> Runtime : chat()
+  Runtime -> Graph : invoke()
+  Graph -> Nodes : ticket_status(state)
+  Nodes -> Batch : get_ticket_status(ticket_id)
+  Batch -> Registry : invoke("get_ticket_status")
+  Registry -> HTTP : GET /permission/tickets/{id}
+  HTTP -> Ticket : 查询状态
+  Ticket --> HTTP : pending / approved / rejected
+
+  alt approved 且存在 pending_task=query_execute
+    Nodes -> Store : 读取 pending_task.sql
+    Nodes --> Graph : continue_query=true
+    Graph -> Nodes : prepare_query(state)
+    Nodes -> Batch : batch_check_permission()
+    Batch -> Registry : invoke("batch_check_permission")
+    Registry -> HTTP : POST /permission/batch-check
+    HTTP -> Permission : 再次校验权限
+    Permission --> HTTP : all_granted=true
+    HTTP --> Registry : permission result
+    Registry --> Batch : result
+    Batch --> Nodes : permission result
+    Nodes --> Graph : _query_ready=true
+    Graph -> Nodes : execute_query(state)
+    Nodes -> Batch : execute_query(sql)
+    Batch -> Registry : invoke("execute_query")
+    Registry -> HTTP : POST /query/execute
+    HTTP -> Query : 恢复原 SQL
+    Query --> HTTP : result
+    HTTP --> Registry : result
+    Registry --> Batch : result
+    Batch --> Nodes : result
+    Nodes --> Graph : response=query_execute
+  else pending / rejected
+    Nodes --> Graph : 返回真实状态，不恢复任务
+    note right of Nodes
+      rejected：提示重新申请或调整资源/期限/角色。
+      pending：提示等待审批，不提前执行 SQL。
+    end note
+  end
+end
+
+opt 其他业务分支
+  alt data_discovery / table_explain / column_explain / metric_explain
+    Nodes -> Batch : search_data_assets / metadata / lineage / metrics
+    Registry -> HTTP : GET /data-assets/*
+    HTTP -> Catalog : 查询元数据事实
+    Catalog --> HTTP : metadata
+    HTTP --> Registry : result
+    Registry --> Batch : result
+    Batch --> Nodes : catalog facts
+  else sql_analyze / sql_optimize / sql_rewrite
+    Nodes -> Batch : validate_sql → parse_sql → DDL/index/stats → explain
+    Registry -> HTTP : SQL/Metadata APIs
+    HTTP -> SQL : EXPLAIN / optimize / rewrite
+    SQL --> HTTP : plan / index / rewritten_sql / risk
+    HTTP --> Registry : result
+    Registry --> Batch : result
+    Batch --> Nodes : SQL analysis
+  else approval_context / approval_risk
+    Nodes -> Batch : get_ticket_context / analyze_risk
+    Registry -> HTTP : Approval APIs
+    HTTP -> Ticket : 查询审批上下文
+    Ticket --> HTTP : applicant / roles / history / risk
+    HTTP --> Registry : result
+    Registry --> Batch : result
+    Batch --> Nodes : approval facts
+  end
+end
+
+== 6. 输出、异常审计与状态落盘 ==
+Graph -> Nodes : finalize(state)
+Nodes -> Store : 保存 messages / response / updated_at
+Registry -> Audit : 工具调用成功或失败审计
+Graph --> Runtime : AgentResponse / interrupt / exception
+Runtime --> CLI : turn result
+CLI --> User : 最终回答、卡片、下一步操作
+
+note over User, Audit
+  统一异常原则：
+  1. 不伪造权限、工单号或查询结果。
+  2. 工具异常写入 Audit，并向调用方传播。
+  3. 用户取消、非法期限、非法角色、无角色在本地分支解决。
+  4. HTTP 401/403、409、5xx、超时和 422 由平台错误码区分处理。
+  5. pending_task、permission_preview 和 ticket 状态由 Checkpointer 保留。
+  6. 重试时必须使用平台幂等键，避免重复创建工单。
+end note
+
+@enduml

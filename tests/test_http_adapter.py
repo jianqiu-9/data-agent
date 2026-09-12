@@ -6,7 +6,7 @@ from data_agent.adapters.http import (
     HttpPlatformAdapter,
     PlatformAPIError,
 )
-from data_agent.tooling import TOOL_NAMES
+from data_agent.tooling import TOOL_NAMES, ToolRegistry
 
 
 def make_adapter(handler) -> tuple[HttpPlatformAdapter, list[httpx.Request]]:
@@ -23,6 +23,7 @@ def make_adapter(handler) -> tuple[HttpPlatformAdapter, list[httpx.Request]]:
     return HttpPlatformAdapter(
         base_url="https://platform.example.com",
         client=client,
+        user_id="u123",
     ), requests
 
 
@@ -43,6 +44,7 @@ def test_search_assets_calls_declared_endpoint() -> None:
     assert result == {"assets": [], "total": 0}
     assert requests[0].method == "GET"
     assert requests[0].url.path == "/api/v1/data-assets/search"
+    assert requests[0].headers["X-User-Id"] == "u123"
     assert requests[0].url.params["query"] == "销售订单"
     assert requests[0].url.params["limit"] == "3"
 
@@ -62,8 +64,9 @@ def test_permission_check_posts_expected_payload() -> None:
     request = requests[0]
     assert request.method == "POST"
     assert request.url.path == "/api/v1/tools/permission/check"
+    assert request.headers["X-User-Id"] == "u123"
     assert request.content
-    assert b'"user_id":"u123"' in request.content
+    assert b'"user_id"' not in request.content
     assert b'"name":"dwd_order"' in request.content
 
 
@@ -95,10 +98,58 @@ def test_create_ticket_uses_prd_flat_payload() -> None:
     request = requests[0]
     assert request.url.path == "/api/v1/tools/permission/tickets"
     body = request.content.decode()
-    assert '"applicant_id":"u123"' in body
+    assert request.headers["X-User-Id"] == "u123"
+    assert '"applicant_id"' not in body
     assert '"duration_days":7' in body
     assert '"approver_id":"销售数据 Owner"' in body
     assert '"application"' not in body
+
+
+def test_user_roles_and_query_use_header_instead_of_parameters() -> None:
+    adapter, requests = make_adapter(
+        lambda request: httpx.Response(200, json={"roles": []})
+    )
+
+    adapter.get_user_roles("u123")
+    adapter.execute_query(
+        user_id="u123",
+        sql="SELECT 1",
+        env="prod",
+    )
+
+    assert requests[0].url.path == "/api/v1/users/me/roles"
+    assert requests[0].headers["X-User-Id"] == "u123"
+    assert requests[1].url.path == "/api/v1/tools/query/execute"
+    assert requests[1].headers["X-User-Id"] == "u123"
+    assert b'"user_id"' not in requests[1].content
+
+
+def test_tool_registry_binds_user_context_for_http_requests() -> None:
+    requests: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"found": True})
+
+    client = httpx.Client(
+        base_url="https://platform.example.com",
+        transport=httpx.MockTransport(record),
+    )
+    adapter = HttpPlatformAdapter(
+        base_url="https://platform.example.com",
+        client=client,
+    )
+    registry = ToolRegistry(adapter)
+
+    registry.invoke(
+        "get_table_metadata",
+        {"table": "dw.dwd_order"},
+        user_id="u123",
+        session_id="s001",
+        task_id="t001",
+    )
+
+    assert requests[0].headers["X-User-Id"] == "u123"
 
 
 def test_platform_error_exposes_status_and_body() -> None:

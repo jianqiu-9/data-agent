@@ -15,10 +15,10 @@ def _as_bool(value: str | bool | None) -> bool:
 
 class LLMSettings(BaseModel):
     enabled: bool = False
-    provider: str = "openai"
-    model: str = "gpt-5"
+    provider: str = "deepseek"
+    model: str = "deepseek-v4-flash"
     api_key: str | None = None
-    base_url: str | None = None
+    base_url: str | None = "https://api.deepseek.com"
     temperature: float = Field(default=0.0, ge=0, le=2)
     timeout_seconds: float = Field(default=30.0, gt=0)
     minimum_confidence: float = Field(default=0.55, ge=0, le=1)
@@ -33,12 +33,23 @@ class LLMSettings(BaseModel):
         import os
 
         values = os.environ if environ is None else environ
+        api_key = values.get(f"{prefix}API_KEY") or values.get(
+            "DEEPSEEK_API_KEY"
+        )
+        enabled_value = values.get(f"{prefix}ENABLED")
+        enabled = (
+            _as_bool(enabled_value)
+            if enabled_value is not None
+            else bool(api_key)
+        )
         return cls(
-            enabled=_as_bool(values.get(f"{prefix}ENABLED", "false")),
-            provider=values.get(f"{prefix}PROVIDER", "openai"),
-            model=values.get(f"{prefix}MODEL", "gpt-5"),
-            api_key=values.get(f"{prefix}API_KEY"),
-            base_url=values.get(f"{prefix}BASE_URL"),
+            enabled=enabled,
+            provider=values.get(f"{prefix}PROVIDER", "deepseek"),
+            model=values.get(f"{prefix}MODEL", "deepseek-v4-flash"),
+            api_key=api_key,
+            base_url=values.get(
+                f"{prefix}BASE_URL", "https://api.deepseek.com"
+            ),
             temperature=float(values.get(f"{prefix}TEMPERATURE", "0")),
             timeout_seconds=float(
                 values.get(f"{prefix}TIMEOUT_SECONDS", "30")
@@ -50,7 +61,11 @@ class LLMSettings(BaseModel):
 
 
 def create_langchain_chat_model(settings: LLMSettings) -> Any:
-    if settings.provider not in {"openai", "openai_compatible"}:
+    if settings.provider not in {
+        "deepseek",
+        "openai",
+        "openai_compatible",
+    }:
         raise ValueError(f"Unsupported LLM provider: {settings.provider}")
     try:
         from langchain_openai import ChatOpenAI
@@ -60,7 +75,10 @@ def create_langchain_chat_model(settings: LLMSettings) -> Any:
             "`pip install -e '.[llm]'`"
         ) from exc
     if not settings.api_key:
-        raise ValueError("DATA_AGENT_LLM_API_KEY is required when LLM is enabled")
+        raise ValueError(
+            "DEEPSEEK_API_KEY or DATA_AGENT_LLM_API_KEY is required "
+            "when LLM is enabled"
+        )
     kwargs: dict[str, Any] = {
         "model": settings.model,
         "api_key": settings.api_key,

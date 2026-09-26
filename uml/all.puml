@@ -19,7 +19,7 @@ participant "Permission Center" as Permission
 participant "Ticket System" as Ticket
 participant "SQL Service" as SQL
 participant "Query Engine" as Query
-participant "LLM" as LLM
+participant "DeepSeek V4 Flash（可选）" as LLM
 participant "Checkpointer" as Store
 participant "Audit Sink" as Audit
 

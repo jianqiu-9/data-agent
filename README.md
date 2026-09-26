@@ -380,29 +380,38 @@ answer_prompt = render_prompt(
 
 ## 可选 LLM 路由
 
-默认 `RuleBasedIntentRouter` 可以完全离线运行。启用 LLM 时，通过环境变量或 CLI
-配置 OpenAI-compatible Chat Model：
+默认 `RuleBasedIntentRouter` 可以完全离线运行。项目默认 LLM 配置为
+**DeepSeek V4 Flash**，通过 OpenAI-compatible API 调用：
 
 ```bash
 export DATA_AGENT_LLM_ENABLED=true
-export DATA_AGENT_LLM_PROVIDER=openai
-export DATA_AGENT_LLM_MODEL=gpt-5
-export DATA_AGENT_LLM_API_KEY=replace-with-your-key
-export DATA_AGENT_LLM_BASE_URL=https://api.openai.com/v1
+export DATA_AGENT_LLM_PROVIDER=deepseek
+export DATA_AGENT_LLM_MODEL=deepseek-v4-flash
+export DATA_AGENT_LLM_API_KEY=replace-with-your-deepseek-api-key
+export DATA_AGENT_LLM_BASE_URL=https://api.deepseek.com
 export DATA_AGENT_LLM_TEMPERATURE=0
 export DATA_AGENT_LLM_TIMEOUT_SECONDS=30
 export DATA_AGENT_LLM_MIN_CONFIDENCE=0.55
 ```
+
+也可以仅设置 DeepSeek 官方通用环境变量：
+
+```bash
+export DEEPSEEK_API_KEY=replace-with-your-deepseek-api-key
+```
+
+如果存在 `DEEPSEEK_API_KEY`，LLM 会默认自动启用；显式设置
+`DATA_AGENT_LLM_ENABLED=false` 可以关闭。
 
 对应 CLI 参数：
 
 ```bash
 .venv/bin/python main.py chat \
   --llm-enabled \
-  --llm-provider openai \
-  --llm-model gpt-5 \
-  --llm-api-key replace-with-your-key \
-  --llm-base-url https://api.openai.com/v1 \
+  --llm-provider deepseek \
+  --llm-model deepseek-v4-flash \
+  --llm-api-key replace-with-your-deepseek-api-key \
+  --llm-base-url https://api.deepseek.com \
   --llm-temperature 0 \
   --llm-timeout-seconds 30 \
   --llm-min-confidence 0.55
@@ -417,7 +426,11 @@ from data_agent.adapters.http import HttpPlatformAdapter
 from data_agent.graph import DataAgentRuntime
 from data_agent.routing import LlmIntentRouter
 
-model = ChatOpenAI(model="gpt-5")
+model = ChatOpenAI(
+    model="deepseek-v4-flash",
+    api_key="your-deepseek-api-key",
+    base_url="https://api.deepseek.com",
+)
 runtime = DataAgentRuntime(
     HttpPlatformAdapter(
         base_url="https://data-platform.example.com",
@@ -428,8 +441,8 @@ runtime = DataAgentRuntime(
 ```
 
 模型输出不是合法 JSON、低于置信度阈值或调用失败时，会自动回退到规则路由。
-LLM 配置定义在 `src/data_agent/llm.py`，支持 `openai` 和
-`openai_compatible` Provider。
+LLM 配置定义在 `src/data_agent/llm.py`，默认使用 `deepseek-v4-flash`，
+同时保留 `openai` 和 `openai_compatible` Provider 兼容能力。
 
 ## 安装
 
@@ -524,9 +537,10 @@ export DATA_PLATFORM_TOKEN=replace-with-your-token
 export DATA_PLATFORM_TIMEOUT_SECONDS=10
 
 export DATA_AGENT_LLM_ENABLED=true
-export DATA_AGENT_LLM_MODEL=gpt-5
-export DATA_AGENT_LLM_API_KEY=replace-with-your-key
-export DATA_AGENT_LLM_BASE_URL=https://api.openai.com/v1
+export DATA_AGENT_LLM_PROVIDER=deepseek
+export DATA_AGENT_LLM_MODEL=deepseek-v4-flash
+export DATA_AGENT_LLM_API_KEY=replace-with-your-deepseek-api-key
+export DATA_AGENT_LLM_BASE_URL=https://api.deepseek.com
 ```
 
 启动：

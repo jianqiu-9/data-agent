@@ -176,7 +176,7 @@ def _interactive_decision(
                 return {"role_id": value}
             print("角色无效，请重新选择。")
     answer = _read_chat_input(
-        "是否同意一键提单？[y/N] ",
+        "是否同意一键提单？[y/n] ",
         idle_timeout_seconds=idle_timeout_seconds,
         warning_seconds=warning_seconds,
     ).strip().lower()
@@ -188,7 +188,11 @@ def _runtime(args: argparse.Namespace) -> DataAgentRuntime:
         enabled=args.llm_enabled,
         provider=args.llm_provider,
         model=args.llm_model,
-        api_key=args.llm_api_key or os.environ.get("DATA_AGENT_LLM_API_KEY"),
+        api_key=(
+            args.llm_api_key
+            or os.environ.get("DATA_AGENT_LLM_API_KEY")
+            or os.environ.get("DEEPSEEK_API_KEY")
+        ),
         base_url=args.llm_base_url or os.environ.get("DATA_AGENT_LLM_BASE_URL"),
         temperature=args.llm_temperature,
         timeout_seconds=args.llm_timeout_seconds,
@@ -355,7 +359,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--llm-provider",
         default=llm_defaults.provider,
-        choices=["openai", "openai_compatible"],
+        choices=["deepseek", "openai", "openai_compatible"],
     )
     parser.add_argument(
         "--llm-model",

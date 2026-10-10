@@ -22,11 +22,12 @@
 | SQL 助手 | SQL 解析、只读校验、DDL/索引/统计信息自动补全、EXPLAIN、问题诊断、索引建议、JOIN 优化、SQL 重写 |
 | Query Assistant | 查询权限检查、风险检查、只读执行、执行状态、结果查询、取消查询、结果解释 |
 | 审批 Agent | 工单上下文、申请人角色、角色历史权限、重复申请、风险分析、审批历史和参考建议 |
+| DAG / 工作流 | 根据业务目标生成 DAG、校验 DAG、提交发布、触发运行、查询状态和历史回填 |
 | 多轮上下文 | 按 `session_id` 保留对话消息、任务状态、资源、SQL、工单和查询结果引用 |
 | 安全 | 默认只允许 `SELECT`，阻止 DML/DDL、多语句和 export 静默执行，写操作必须人工确认 |
 | 审计 | 每次工具调用记录时间、用户、会话、任务、意图、请求、响应、延迟、SQL、工单和查询 ID |
 | Prompt | 17 类意图均有独立 Prompt，包含执行顺序、事实约束、输出格式和风险规则 |
-| 接口 | 31 个平台工具都有明确 REST 方法、路径和请求模型；所有请求通过 `X-User-Id` 请求头传递当前用户 |
+| 接口 | 37 个平台工具都有明确 REST 方法、路径和请求模型；所有请求通过 `X-User-Id` 请求头传递当前用户 |
 
 ## 架构
 
@@ -62,13 +63,14 @@ src/data_agent/
 ├── state.py             LangGraph AgentState / Task State
 ├── models.py            意图、资源、权限动作、环境和审计模型
 ├── services.py          数据目录/权限/SQL/查询/审批协议
-├── api_contracts.py     31 个 REST 接口的 Pydantic 请求模型和平台配置
+├── api_contracts.py     37 个 REST 接口的 Pydantic 请求模型和平台配置
 ├── tooling.py           工具注册、调用批处理和审计事件
 ├── formatting.py        基于工具事实的回答与卡片格式化
 ├── adapters/
 │   ├── memory.py        可离线运行的本地平台
 │   └── http.py          可直接接入真实平台的 HTTP 实现
 ├── cli.py               命令行入口
+├── http_server.py       供其他平台调用的 HTTP 入口
 └── __main__.py          python -m data_agent 入口
 
 uml/
@@ -97,6 +99,12 @@ uml/
 | `query_explain` | `explain_query_result` | `get_query_result` |
 | `approval_context` | `approval_context` | `get_ticket_context` |
 | `approval_risk` | `approval_risk` | `get_ticket_context`、`analyze_risk`、`get_approval_history` |
+| `dag_generate` | `generate_dag` | `generate_dag` |
+| `dag_validate` | `validate_dag` | `validate_dag` |
+| `dag_submit` | `submit_dag` | `validate_dag`、`submit_dag` |
+| `dag_trigger` | `trigger_dag` | `trigger_dag` |
+| `dag_status` | `dag_status` | `get_dag_status` |
+| `dag_backfill` | `backfill_dag` | `backfill_dag` |
 | `unknown` | `unknown` | 无 |
 
 权限申请使用 LangGraph `interrupt`，无权限时弹出三步选择：
@@ -179,6 +187,11 @@ sql_analysis
 query_status
 result_reference
 approval_context
+dag_definition
+dag_id
+dag_status
+dag_run
+dag_backfill
 response
 messages
 audit_events
@@ -270,6 +283,17 @@ X-User-Id: u123
 | `check_duplicate_permission` | `POST` | `/api/v1/tools/approval/tickets/{ticket_id}/check-duplicate` | Header `X-User-Id`、`application` |
 | `analyze_risk` | `POST` | `/api/v1/tools/approval/tickets/{ticket_id}/risk` | `ticket`、`context` |
 | `get_approval_history` | `GET` | `/api/v1/tools/approval/tickets/{ticket_id}/history` | 工单 ID |
+
+### DAG / Workflow
+
+| 工具 | 方法 | 路径 | 请求 |
+| --- | --- | --- | --- |
+| `generate_dag` | `POST` | `/api/v1/dags/generate` | `goal`、`schedule`、`owner`、`resources` |
+| `validate_dag` | `POST` | `/api/v1/dags/validate` | `dag_definition`、`env` |
+| `submit_dag` | `POST` | `/api/v1/dags` | `dag_definition`、`env` |
+| `trigger_dag` | `POST` | `/api/v1/dags/{dag_id}/trigger` | `logical_date`、`conf` |
+| `get_dag_status` | `GET` | `/api/v1/dags/{dag_id}` | DAG ID |
+| `backfill_dag` | `POST` | `/api/v1/dags/{dag_id}/backfill` | `start_date`、`end_date` |
 
 接口请求模型定义在 `src/data_agent/api_contracts.py`，HTTP 调用定义在
 `src/data_agent/adapters/http.py`。
@@ -463,6 +487,33 @@ python -m venv .venv
 .venv/bin/pytest -q
 ```
 
+## Mock 数据平台
+
+项目默认使用 `mock` 适配器，不依赖真实数据平台即可运行。DAG 接口会返回结构合法的
+随机数据，并支持固定随机种子复现：
+
+```bash
+export DATA_AGENT_ADAPTER=mock
+export DATA_AGENT_MOCK_RANDOM_SEED=42
+```
+
+也可以使用 CLI 参数：
+
+```bash
+.venv/bin/python main.py "帮我生成一个每天同步订单的 DAG" \
+  --adapter mock \
+  --mock-random-seed 42
+```
+
+Mock 接口包括：
+
+- `generate_dag`：随机生成 DAG ID、任务和依赖。
+- `validate_dag`：随机返回校验通过或错误。
+- `submit_dag`：随机返回发布状态和版本。
+- `trigger_dag`：随机返回 run ID 和运行状态。
+- `get_dag_status`：随机返回 queued、running、success、failed 或 paused。
+- `backfill_dag`：随机返回回填任务 ID、状态和预计运行次数。
+
 ## 本地演示
 
 最终用户不需要理解 `ask` 和 `chat`，CLI 会自动判断：
@@ -526,6 +577,49 @@ export DATA_AGENT_CHAT_TIMEOUT_WARNING_SECONDS=120
 .venv/bin/python main.py ask "帮我申请 dwd_order SELECT 权限 7 天，用于订单分析" --user-id u123 --yes
 ```
 
+## 供其他平台通过 HTTP 调用
+
+服务启动后复用同一个 `DataAgentRuntime`，用 `session_id` 维持多轮对话和人工确认中断。
+默认只监听本机。让其他机器访问时，设置访问令牌并指定监听地址；外部网络入口应由
+反向代理提供 HTTPS。
+
+```bash
+# 安装后启动；默认使用 mock 数据平台
+.venv/bin/data-agent-http --host 127.0.0.1 --port 8000
+
+# 对外监听时必须配置令牌
+export DATA_AGENT_HTTP_TOKEN=replace-with-a-long-random-token
+.venv/bin/data-agent-http --host 0.0.0.0 --port 8000
+```
+
+也可运行 `.venv/bin/python -m data_agent.http_server`。服务使用现有的
+`DATA_AGENT_ADAPTER`、`DATA_PLATFORM_BASE_URL`、`DATA_PLATFORM_TOKEN` 和 LLM 环境配置。
+
+发起一轮对话：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/chat \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $DATA_AGENT_HTTP_TOKEN" \
+  -d '{"user_id":"u123","message":"dwd_order 是干嘛的？","env":"prod"}'
+```
+
+响应包含 `session_id`、`status`，完成时包含 `response` 和 `intent`；需要人工确认时
+`status` 为 `interrupted`，并包含 `interrupt`。调用方保留 `session_id`，后续消息再次
+调用 `/v1/chat` 并传入相同的 `user_id` 和 `session_id`。处理中断时调用：
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/resume \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $DATA_AGENT_HTTP_TOKEN" \
+  -d '{"user_id":"u123","session_id":"s-...","decision":{"approved":true}}'
+```
+
+期限和角色选择中断分别传入 `{"duration_days":7}`、
+`{"role_id":"r_sales_analyst"}`。`GET /health` 返回健康状态；配置令牌时该接口也需
+携带认证头。请求体最多 1 MiB。会话检查点、用户归属和中断记录保存在服务进程内存中，
+重启后不能恢复。跨重启恢复需要同时持久化 Checkpointer 和会话元数据。
+
 ## 连接真实平台
 
 环境变量：
@@ -559,7 +653,7 @@ export DATA_AGENT_LLM_BASE_URL=https://api.deepseek.com
   --user-id u123
 ```
 
-真实平台需要实现 README 中列出的 31 个 REST 接口。如果平台协议略有不同，只需修改
+真实平台需要实现 README 中列出的 37 个 REST 接口。如果平台协议略有不同，只需修改
 `HttpPlatformAdapter`，LangGraph 节点和 Prompt 不需要改动。
 
 ## 安全设计
@@ -668,7 +762,7 @@ runtime.resume(
 - 只读查询权限拦截与成功执行。
 - 审批上下文、角色历史和风险。
 - 工单审批通过后恢复原查询。
-- 31 个 HTTP 工具实现完整性。
+- 37 个 HTTP 工具实现完整性。
 - HTTP 方法、路径、参数和错误处理。
 - 所有 HTTP 请求的 `X-User-Id` 请求头和无 user_id 参数校验。
 - 17 类 Prompt 的完整性和可渲染性。
@@ -679,7 +773,7 @@ runtime.resume(
 ## 生产接入清单
 
 1. 将 `MemorySaver` 替换为持久化 checkpointer。
-2. 实现或适配 README 中的 31 个 REST 接口。
+2. 实现或适配 README 中的 37 个 REST 接口。
 3. 使用服务账号或用户 Token 调用平台，禁止 Agent 服务账号获得授权能力。
 4. 将 `audit_sink` 接入企业日志、数据审计或 OpenTelemetry。
 5. 对权限检查、角色和元数据增加短 TTL 缓存。

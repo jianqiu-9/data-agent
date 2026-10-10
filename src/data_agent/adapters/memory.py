@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import random
 import re
 from copy import deepcopy
 from datetime import datetime, timedelta
@@ -8,10 +10,20 @@ from zoneinfo import ZoneInfo
 
 
 def _now() -> datetime:
+
+    """作用：负责 `_now` 对应的处理。
+    上游：AgentNodes.finalize, AgentNodes.prepare, InMemoryPlatformAdapter.approve_ticket, InMemoryPlatformAdapter.check_permission, InMemoryPlatformAdapter.create_permission_ticket, InMemoryPlatformAdapter.execute_query。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return datetime.now(ZoneInfo("Asia/Shanghai"))
 
 
 def _iso(value: datetime) -> str:
+
+    """作用：负责 `_iso` 对应的处理。
+    上游：InMemoryPlatformAdapter.approve_ticket, InMemoryPlatformAdapter.create_permission_ticket。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return value.isoformat(timespec="seconds")
 
 
@@ -25,6 +37,10 @@ def _asset(
     score: int,
     fields: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """作用：负责 `_asset` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return {
         "asset_id": f"asset.{name}",
         "asset_name": name,
@@ -305,14 +321,25 @@ PERMISSION_HISTORY: dict[str, list[dict[str, Any]]] = {
 class InMemoryPlatformAdapter:
     """Deterministic local implementation of the platform gateway contracts."""
 
-    def __init__(self) -> None:
+    def __init__(self, random_seed: int | None = None) -> None:
+        """作用：负责 `__init__` 对应的处理。
+        上游：PlatformAPIError.__init__。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         self._tickets: dict[str, dict[str, Any]] = {}
         self._queries: dict[str, dict[str, Any]] = {}
+        self._dags: dict[str, dict[str, Any]] = {}
+        self._dag_runs: dict[str, dict[str, Any]] = {}
         self._ticket_sequence = 1
         self._query_sequence = 1
+        self._random = random.Random(random_seed)
 
     @staticmethod
     def _canonical_name(name: str) -> str:
+        """作用：负责 `_canonical_name` 对应的处理。
+        上游：InMemoryPlatformAdapter.check_duplicate_permission, InMemoryPlatformAdapter.check_permission, InMemoryPlatformAdapter.create_permission_ticket, InMemoryPlatformAdapter.get_data_lineage, InMemoryPlatformAdapter.get_indexes, InMemoryPlatformAdapter.get_permission_history, InMemoryPlatformAdapter.get_statistics, InMemoryPlatformAdapter.get_table_metadata, InMemoryPlatformAdapter.parse_sql, InMemoryPlatformAdapter.recommend_permission。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         value = name.strip().strip("`")
         if "." in value:
             return value
@@ -320,9 +347,18 @@ class InMemoryPlatformAdapter:
 
     @staticmethod
     def _public_asset(asset: dict[str, Any]) -> dict[str, Any]:
+
+        """作用：负责 `_public_asset` 对应的处理。
+        上游：InMemoryPlatformAdapter.get_table_metadata, InMemoryPlatformAdapter.search_data_assets。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return {key: deepcopy(value) for key, value in asset.items() if key != "keywords"}
 
     def search_data_assets(self, query: str, limit: int = 5) -> dict[str, Any]:
+        """作用：负责 `search_data_assets` 对应的处理。
+        上游：InMemoryPlatformAdapter.recommend_data_asset。
+        下游：_public_asset。
+        """
         query_lower = query.lower()
         matches: list[tuple[int, dict[str, Any]]] = []
         for asset in ASSETS.values():
@@ -347,6 +383,10 @@ class InMemoryPlatformAdapter:
         return {"assets": assets[:limit], "total": min(len(assets), limit)}
 
     def get_table_metadata(self, table: str) -> dict[str, Any]:
+        """作用：负责 `get_table_metadata` 对应的处理。
+        上游：InMemoryPlatformAdapter.analyze_risk, InMemoryPlatformAdapter.get_column_metadata, InMemoryPlatformAdapter.get_table_ddl, InMemoryPlatformAdapter.recommend_data_asset, InMemoryPlatformAdapter.recommend_permission。
+        下游：_canonical_name, _public_asset。
+        """
         canonical = self._canonical_name(table)
         asset = ASSETS.get(canonical)
         if asset is None:
@@ -362,6 +402,10 @@ class InMemoryPlatformAdapter:
     def get_column_metadata(
         self, table: str, column: str | None = None
     ) -> dict[str, Any]:
+        """作用：负责 `get_column_metadata` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：get_table_metadata。
+        """
         metadata = self.get_table_metadata(table)
         if not metadata["found"]:
             return metadata
@@ -384,6 +428,10 @@ class InMemoryPlatformAdapter:
         }
 
     def get_data_lineage(self, table: str) -> dict[str, Any]:
+        """作用：负责 `get_data_lineage` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_canonical_name。
+        """
         canonical = self._canonical_name(table)
         lineage = {
             "dw.dwd_order": {
@@ -403,6 +451,10 @@ class InMemoryPlatformAdapter:
         }
 
     def search_metrics(self, query: str, limit: int = 5) -> dict[str, Any]:
+        """作用：负责 `search_metrics` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         query_lower = query.lower()
         matches = []
         for metric in METRICS.values():
@@ -422,6 +474,10 @@ class InMemoryPlatformAdapter:
         return {"metrics": matches[:limit], "total": min(len(matches), limit)}
 
     def get_metric_definition(self, metric: str) -> dict[str, Any]:
+        """作用：负责 `get_metric_definition` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         key = metric.strip().lower()
         definition = METRICS.get(key)
         if definition is None:
@@ -443,6 +499,10 @@ class InMemoryPlatformAdapter:
     def recommend_data_asset(
         self, goal: str, resources: list[dict[str, Any]] | None = None
     ) -> dict[str, Any]:
+        """作用：负责 `recommend_data_asset` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：get_table_metadata, search_data_assets。
+        """
         if any(word in goal for word in ["日报", "每天", "每日", "日汇总"]):
             recommended = "dw.dws_sales_daily"
             reason = "已聚合到日粒度，并包含标准销售指标，查询成本低于订单明细表。"
@@ -470,6 +530,10 @@ class InMemoryPlatformAdapter:
         action: str,
         env: str,
     ) -> dict[str, Any]:
+        """作用：负责 `check_permission` 对应的处理。
+        上游：InMemoryPlatformAdapter.batch_check_permission, InMemoryPlatformAdapter.check_duplicate_permission。
+        下游：_canonical_name, _now。
+        """
         resource_name = self._canonical_name(
             resource.get("qualified_name")
             or resource.get("name")
@@ -532,6 +596,10 @@ class InMemoryPlatformAdapter:
     def batch_check_permission(
         self, user_id: str, checks: list[dict[str, Any]]
     ) -> dict[str, Any]:
+        """作用：负责 `batch_check_permission` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：check_permission。
+        """
         results = [
             self.check_permission(
                 user_id=user_id,
@@ -547,6 +615,10 @@ class InMemoryPlatformAdapter:
         }
 
     def get_user_roles(self, user_id: str) -> dict[str, Any]:
+        """作用：负责 `get_user_roles` 对应的处理。
+        上游：InMemoryPlatformAdapter.recommend_permission。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         role_ids = USER_ROLES.get(user_id, [])
         return {
             "user_id": user_id,
@@ -554,6 +626,10 @@ class InMemoryPlatformAdapter:
         }
 
     def get_role_detail(self, role_id: str) -> dict[str, Any]:
+        """作用：负责 `get_role_detail` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         role = ROLES.get(role_id)
         if role is None:
             role = next(
@@ -572,6 +648,10 @@ class InMemoryPlatformAdapter:
         role_id: str | None = None,
         resource: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """作用：负责 `get_permission_history` 对应的处理。
+        上游：InMemoryPlatformAdapter.get_ticket_context。
+        下游：_canonical_name。
+        """
         history = deepcopy(PERMISSION_HISTORY.get(user_id, []))
         if role_id:
             history = [item for item in history if item["role_id"] == role_id]
@@ -593,6 +673,10 @@ class InMemoryPlatformAdapter:
         env: str,
         task_goal: str,
     ) -> dict[str, Any]:
+        """作用：负责 `recommend_permission` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_canonical_name, get_table_metadata, get_user_roles。
+        """
         if any(word in task_goal for word in ["长期", "持续", "长期项目"]):
             duration_days = 90
             task_type = "长期项目"
@@ -626,6 +710,10 @@ class InMemoryPlatformAdapter:
     def create_permission_ticket(
         self, applicant_id: str, application: dict[str, Any]
     ) -> dict[str, Any]:
+        """作用：负责 `create_permission_ticket` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_canonical_name, _iso, _now。
+        """
         ticket_id = f"T{_now():%Y%m%d}{self._ticket_sequence:04d}"
         self._ticket_sequence += 1
         application = deepcopy(application)
@@ -687,12 +775,196 @@ class InMemoryPlatformAdapter:
         return deepcopy(ticket)
 
     def get_ticket_status(self, ticket_id: str) -> dict[str, Any]:
+        """作用：负责 `get_ticket_status` 对应的处理。
+        上游：InMemoryPlatformAdapter.get_ticket_context。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         ticket = self._tickets.get(ticket_id)
         if ticket is None:
             return {"ticket_id": ticket_id, "status": "not_found"}
         return deepcopy(ticket)
 
+    def generate_dag(
+        self,
+        goal: str,
+        schedule: str | None = None,
+        owner: str | None = None,
+        resources: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """作用：负责 `generate_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        dag_id = f"dag_{self._random.randbytes(4).hex()}"
+        task_pool = [
+            "extract_source",
+            "validate_source",
+            "transform_data",
+            "quality_check",
+            "publish_output",
+        ]
+        task_count = self._random.randint(3, len(task_pool))
+        tasks = [
+            {
+                "task_id": task_name,
+                "task_type": "python" if task_name != "quality_check" else "sql",
+                "retries": self._random.randint(1, 3),
+            }
+            for task_name in task_pool[:task_count]
+        ]
+        definition = {
+            "dag_id": dag_id,
+            "description": goal,
+            "schedule": schedule or "0 0 * * *",
+            "owner": owner or "data-agent",
+            "resources": resources or [],
+            "tasks": tasks,
+            "dependencies": [
+                [tasks[index]["task_id"], tasks[index + 1]["task_id"]]
+                for index in range(len(tasks) - 1)
+            ],
+        }
+        result = {
+            "dag_id": dag_id,
+            "status": "draft",
+            "schedule": definition["schedule"],
+            "owner": definition["owner"],
+            "tasks": deepcopy(tasks),
+            "dag_definition": json.dumps(
+                definition,
+                ensure_ascii=False,
+                indent=2,
+            ),
+        }
+        self._dags[dag_id] = deepcopy(result)
+        return result
+
+    def validate_dag(
+        self,
+        dag_definition: str,
+        env: str = "prod",
+    ) -> dict[str, Any]:
+        """作用：负责 `validate_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        valid = bool(self._random.getrandbits(1))
+        errors = []
+        warnings = []
+        if not dag_definition.strip():
+            valid = False
+            errors.append("DAG definition is empty")
+        if not valid:
+            errors.append(
+                self._random.choice(
+                    [
+                        "Task dependency cycle detected",
+                        "DAG schedule expression is invalid",
+                        "Required task retry policy is missing",
+                    ]
+                )
+            )
+        if self._random.random() < 0.4:
+            warnings.append("Task concurrency should be reviewed")
+        return {
+            "valid": valid,
+            "env": env,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    def submit_dag(
+        self,
+        dag_definition: str,
+        env: str = "prod",
+    ) -> dict[str, Any]:
+        """作用：负责 `submit_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        dag_id = None
+        try:
+            payload = json.loads(dag_definition)
+            if isinstance(payload, dict):
+                dag_id = payload.get("dag_id")
+        except json.JSONDecodeError:
+            pass
+        dag_id = dag_id or f"dag_{self._random.randbytes(4).hex()}"
+        status = self._random.choice(["queued", "published", "pending"])
+        result = {
+            "dag_id": dag_id,
+            "status": status,
+            "env": env,
+            "version": f"v{self._random.randint(1, 20)}",
+        }
+        if dag_id in self._dags:
+            self._dags[dag_id].update(result)
+        return result
+
+    def trigger_dag(
+        self,
+        dag_id: str,
+        logical_date: str | None = None,
+        conf: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """作用：负责 `trigger_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        run_id = f"run_{self._random.randbytes(4).hex()}"
+        status = self._random.choice(["queued", "running", "success", "failed"])
+        result = {
+            "dag_id": dag_id,
+            "run_id": run_id,
+            "logical_date": logical_date,
+            "status": status,
+            "conf": conf or {},
+        }
+        self._dag_runs[run_id] = deepcopy(result)
+        return result
+
+    def get_dag_status(self, dag_id: str) -> dict[str, Any]:
+        """作用：负责 `get_dag_status` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        status = self._random.choice(
+            ["queued", "running", "success", "failed", "paused"]
+        )
+        if dag_id in self._dags:
+            self._dags[dag_id]["status"] = status
+            return deepcopy(self._dags[dag_id])
+        return {
+            "dag_id": dag_id,
+            "status": status,
+            "last_run_id": f"run_{self._random.randbytes(4).hex()}",
+            "last_run_status": status,
+        }
+
+    def backfill_dag(
+        self,
+        dag_id: str,
+        start_date: str,
+        end_date: str,
+    ) -> dict[str, Any]:
+        """作用：负责 `backfill_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        return {
+            "dag_id": dag_id,
+            "backfill_id": f"backfill_{self._random.randbytes(4).hex()}",
+            "start_date": start_date,
+            "end_date": end_date,
+            "status": self._random.choice(["accepted", "running", "queued"]),
+            "estimated_runs": self._random.randint(1, 30),
+        }
+
     def parse_sql(self, sql: str) -> dict[str, Any]:
+        """作用：负责 `parse_sql` 对应的处理。
+        上游：InMemoryPlatformAdapter.execute_query, InMemoryPlatformAdapter.explain_sql, InMemoryPlatformAdapter.optimize_sql。
+        下游：_canonical_name。
+        """
         table_matches = re.findall(
             r"\b(?:from|join)\s+([`\w.]+)(?:\s+(?:as\s+)?([a-zA-Z_]\w*))?",
             sql,
@@ -744,6 +1016,10 @@ class InMemoryPlatformAdapter:
         }
 
     def get_table_ddl(self, table: str) -> dict[str, Any]:
+        """作用：负责 `get_table_ddl` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：get_table_metadata。
+        """
         metadata = self.get_table_metadata(table)
         if not metadata["found"]:
             return metadata
@@ -760,6 +1036,10 @@ class InMemoryPlatformAdapter:
         }
 
     def get_indexes(self, table: str) -> dict[str, Any]:
+        """作用：负责 `get_indexes` 对应的处理。
+        上游：InMemoryPlatformAdapter.optimize_sql。
+        下游：_canonical_name。
+        """
         canonical = self._canonical_name(table)
         indexes = {
             "dw.dwd_order": [
@@ -776,6 +1056,10 @@ class InMemoryPlatformAdapter:
         return {"resource": canonical, "indexes": deepcopy(indexes.get(canonical, []))}
 
     def get_statistics(self, table: str) -> dict[str, Any]:
+        """作用：负责 `get_statistics` 对应的处理。
+        上游：InMemoryPlatformAdapter.explain_sql。
+        下游：_canonical_name。
+        """
         canonical = self._canonical_name(table)
         stats = {
             "dw.dwd_order": {"row_count": 100_000_000, "size_gb": 420, "last_analyzed": "2026-09-12"},
@@ -789,6 +1073,10 @@ class InMemoryPlatformAdapter:
         }
 
     def explain_sql(self, sql: str) -> dict[str, Any]:
+        """作用：负责 `explain_sql` 对应的处理。
+        上游：InMemoryPlatformAdapter.optimize_sql。
+        下游：get_statistics, parse_sql。
+        """
         parsed = self.parse_sql(sql)
         steps = []
         estimated_scan = 0
@@ -817,6 +1105,10 @@ class InMemoryPlatformAdapter:
         }
 
     def validate_sql(self, sql: str) -> dict[str, Any]:
+        """作用：负责 `validate_sql` 对应的处理。
+        上游：InMemoryPlatformAdapter.execute_query。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         normalized = sql.strip()
         errors: list[str] = []
         warnings: list[str] = []
@@ -846,6 +1138,10 @@ class InMemoryPlatformAdapter:
     def optimize_sql(
         self, sql: str, context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        """作用：负责 `optimize_sql` 对应的处理。
+        上游：AgentNodes.rewrite_sql, InMemoryPlatformAdapter.rewrite_sql。
+        下游：_rewrite_order_select, explain_sql, get_indexes, parse_sql。
+        """
         parsed = self.parse_sql(sql)
         context = context or {}
         ddl = context.get("ddl") or {}
@@ -938,6 +1234,10 @@ class InMemoryPlatformAdapter:
     def rewrite_sql(
         self, sql: str, context: dict[str, Any] | None = None
     ) -> dict[str, Any]:
+        """作用：负责 `rewrite_sql` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：optimize_sql。
+        """
         optimized = self.optimize_sql(sql, context)
         return {
             "original_sql": sql,
@@ -947,6 +1247,10 @@ class InMemoryPlatformAdapter:
         }
 
     def _rewrite_order_select(self, sql: str, parsed: dict[str, Any]) -> str:
+        """作用：负责 `_rewrite_order_select` 对应的处理。
+        上游：InMemoryPlatformAdapter.optimize_sql。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         if parsed["selected_columns"] != ["*"] or parsed["tables"] != ["dw.dwd_order"]:
             return sql.strip()
         columns = ", ".join(field["name"] for field in ASSETS["dw.dwd_order"]["fields"])
@@ -961,6 +1265,10 @@ class InMemoryPlatformAdapter:
     def execute_query(
         self, user_id: str, sql: str, env: str
     ) -> dict[str, Any]:
+        """作用：负责 `execute_query` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_now, parse_sql, validate_sql。
+        """
         validation = self.validate_sql(sql)
         if not validation["valid"]:
             return {
@@ -1016,6 +1324,10 @@ class InMemoryPlatformAdapter:
         return deepcopy(result)
 
     def get_query_status(self, query_id: str) -> dict[str, Any]:
+        """作用：负责 `get_query_status` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         result = self._queries.get(query_id)
         if result is None:
             return {"query_id": query_id, "status": "not_found"}
@@ -1026,9 +1338,18 @@ class InMemoryPlatformAdapter:
         }
 
     def get_query_result(self, query_id: str) -> dict[str, Any]:
+
+        """作用：负责 `get_query_result` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return deepcopy(self._queries.get(query_id, {"query_id": query_id, "status": "not_found"}))
 
     def cancel_query(self, query_id: str) -> dict[str, Any]:
+        """作用：负责 `cancel_query` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         result = self._queries.get(query_id)
         if result is None:
             return {"query_id": query_id, "status": "not_found"}
@@ -1036,6 +1357,10 @@ class InMemoryPlatformAdapter:
         return {"query_id": query_id, "status": "cancelled"}
 
     def get_ticket_context(self, ticket_id: str) -> dict[str, Any]:
+        """作用：负责 `get_ticket_context` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：analyze_risk, check_duplicate_permission, get_permission_history, get_ticket_status。
+        """
         ticket = self.get_ticket_status(ticket_id)
         if ticket["status"] == "not_found":
             return {"found": False, "ticket_id": ticket_id}
@@ -1076,6 +1401,10 @@ class InMemoryPlatformAdapter:
     def check_duplicate_permission(
         self, applicant_id: str, application: dict[str, Any]
     ) -> dict[str, Any]:
+        """作用：负责 `check_duplicate_permission` 对应的处理。
+        上游：InMemoryPlatformAdapter.get_ticket_context。
+        下游：_canonical_name, check_permission。
+        """
         resource = application.get("resource", {})
         resource_name = self._canonical_name(
             resource.get("qualified_name") or resource.get("name") or resource
@@ -1096,6 +1425,10 @@ class InMemoryPlatformAdapter:
     def analyze_risk(
         self, ticket: dict[str, Any], context: dict[str, Any]
     ) -> dict[str, Any]:
+        """作用：负责 `analyze_risk` 对应的处理。
+        上游：InMemoryPlatformAdapter.get_ticket_context。
+        下游：get_table_metadata。
+        """
         reasons: list[str] = []
         level = "low"
         if ticket.get("env") == "prod":
@@ -1119,6 +1452,10 @@ class InMemoryPlatformAdapter:
         return {"level": level, "reasons": reasons}
 
     def get_approval_history(self, ticket_id: str) -> dict[str, Any]:
+        """作用：负责 `get_approval_history` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         ticket = self._tickets.get(ticket_id)
         if not ticket:
             return {"ticket_id": ticket_id, "history": []}

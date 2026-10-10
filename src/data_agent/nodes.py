@@ -15,6 +15,11 @@ from data_agent.tooling import ToolBatch, ToolRegistry
 
 
 def _now() -> str:
+
+    """作用：负责 `_now` 对应的处理。
+    上游：AgentNodes.finalize, AgentNodes.prepare, InMemoryPlatformAdapter.approve_ticket, InMemoryPlatformAdapter.check_permission, InMemoryPlatformAdapter.create_permission_ticket, InMemoryPlatformAdapter.execute_query。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
 
 
@@ -24,10 +29,18 @@ class AgentNodes:
         tools: ToolRegistry,
         router: IntentRouter | None = None,
     ) -> None:
+        """作用：负责 `__init__` 对应的处理。
+        上游：PlatformAPIError.__init__。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         self.tools = tools
         self.router = router or RuleBasedIntentRouter()
 
     def prepare(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `prepare` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_now。
+        """
         previous_task_id = state.get("task_id")
         message = state.get("message", "").strip()
         return {
@@ -40,6 +53,10 @@ class AgentNodes:
         }
 
     def route(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `route` 对应的处理。
+        上游：AgentNodes.route, LlmIntentRouter.route。
+        下游：route。
+        """
         result = self.router.route(
             state.get("message", ""),
             state.get("context", {}),
@@ -56,6 +73,10 @@ class AgentNodes:
         }
 
     def discover_assets(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `discover_assets` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_batch, _response, call, format_asset_search, state_update。
+        """
         batch = self._batch(state)
         goal = state.get("message", "")
         search = batch.call("search_data_assets", query=goal, limit=5)
@@ -113,6 +134,10 @@ class AgentNodes:
         }
 
     def explain_table(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `explain_table` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _resource_name, _response, call, format_table_metadata, state_update。
+        """
         table = self._resource_name(state)
         if not table:
             return self._ask_for(
@@ -143,6 +168,10 @@ class AgentNodes:
         return {"response": response, **batch.state_update()}
 
     def explain_columns(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `explain_columns` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _infer_table_for_columns, _resource_name, _response, call, format_columns, state_update。
+        """
         entities = state.get("entities", {})
         columns = entities.get("columns", [])
         table = self._resource_name(state) or self._infer_table_for_columns(columns)
@@ -179,6 +208,10 @@ class AgentNodes:
         return {"response": response, **batch.state_update()}
 
     def explain_metric(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `explain_metric` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, call, format_metric, state_update。
+        """
         metric_name = state.get("entities", {}).get("metric")
         if not metric_name:
             return self._ask_for(
@@ -206,6 +239,10 @@ class AgentNodes:
         return {"response": response, **batch.state_update()}
 
     def check_permission(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `check_permission` 对应的处理。
+        上游：InMemoryPlatformAdapter.batch_check_permission, InMemoryPlatformAdapter.check_duplicate_permission。
+        下游：_ask_for, _batch, _resource, _response, call, format_permission, state_update。
+        """
         resource = self._resource(state)
         if not resource:
             return self._ask_for(
@@ -289,6 +326,10 @@ class AgentNodes:
         }
 
     def apply_permission(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `apply_permission` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _confirmed, _duration_decision, _resource, _response, _role_decision, call, state_update。
+        """
         preview = state.get("permission_preview")
         entities = state.get("entities", {})
         resource = self._resource(state)
@@ -456,6 +497,10 @@ class AgentNodes:
         }
 
     def permission_history(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `permission_history` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_batch, _resource, _response, call, format_permission_history, state_update。
+        """
         batch = self._batch(state)
         resource = self._resource(state)
         result = batch.call(
@@ -473,6 +518,10 @@ class AgentNodes:
         return {"response": response, **batch.state_update()}
 
     def ticket_status(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `ticket_status` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, call, format_ticket_status, state_update。
+        """
         ticket_id = state.get("entities", {}).get("ticket_id") or (
             state.get("ticket") or {}
         ).get("ticket_id")
@@ -510,6 +559,10 @@ class AgentNodes:
         return update
 
     def explain_role(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `explain_role` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, call, format_role, state_update。
+        """
         role_id = state.get("entities", {}).get("role_id")
         if not role_id:
             return self._ask_for(
@@ -533,6 +586,10 @@ class AgentNodes:
         return {"response": response, **batch.state_update()}
 
     def analyze_sql(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `analyze_sql` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _load_sql_context, _response, _sql, call, format_sql_analysis, state_update。
+        """
         sql = self._sql(state)
         if not sql:
             return self._ask_for(
@@ -573,6 +630,10 @@ class AgentNodes:
         }
 
     def optimize_sql(self, state: AgentState, *, rewrite_only: bool = False) -> dict[str, Any]:
+        """作用：负责 `optimize_sql` 对应的处理。
+        上游：AgentNodes.rewrite_sql, InMemoryPlatformAdapter.rewrite_sql。
+        下游：_ask_for, _batch, _load_sql_context, _response, _sql, call, format_optimization, state_update。
+        """
         sql = self._sql(state)
         if not sql:
             return self._ask_for(
@@ -634,9 +695,18 @@ class AgentNodes:
         }
 
     def rewrite_sql(self, state: AgentState) -> dict[str, Any]:
+
+        """作用：负责 `rewrite_sql` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：optimize_sql。
+        """
         return self.optimize_sql(state, rewrite_only=True)
 
     def prepare_query(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `prepare_query` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, _sql, call, format_permission_preview, state_update。
+        """
         sql = self._sql(state)
         if not sql:
             return self._ask_for(
@@ -747,6 +817,10 @@ class AgentNodes:
         }
 
     def execute_query(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `execute_query` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, _sql, call, format_query_result, state_update。
+        """
         sql = self._sql(state)
         if not sql:
             return self._ask_for(
@@ -783,6 +857,10 @@ class AgentNodes:
         }
 
     def explain_query_result(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `explain_query_result` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, call, format_query_explanation, state_update。
+        """
         reference = state.get("result_reference") or {}
         query_id = reference.get("query_id")
         if not query_id:
@@ -803,6 +881,10 @@ class AgentNodes:
         return {"response": response, **batch.state_update()}
 
     def approval_context(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `approval_context` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, call, format_approval_context, state_update。
+        """
         ticket_id = state.get("entities", {}).get("ticket_id")
         if not ticket_id:
             return self._ask_for(
@@ -830,6 +912,10 @@ class AgentNodes:
         }
 
     def approval_risk(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `approval_risk` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _response, call, format_approval_context, state_update。
+        """
         ticket_id = state.get("entities", {}).get("ticket_id") or (
             state.get("approval_context", {}).get("ticket") or {}
         ).get("ticket_id")
@@ -883,7 +969,253 @@ class AgentNodes:
             **batch.state_update(),
         }
 
+    def generate_dag(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `generate_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_batch, _dag_schedule, _response, call, state_update。
+        """
+        batch = self._batch(state)
+        message = state.get("message", "")
+        schedule = self._dag_schedule(message)
+        dag = batch.call(
+            "generate_dag",
+            goal=state.get("business_goal", message),
+            schedule=schedule,
+            owner=state.get("user_id"),
+            resources=state.get("identified_resources", []),
+        )
+        tasks = "、".join(
+            task["task_id"] for task in dag.get("tasks", [])
+        )
+        answer = (
+            f"已生成 DAG：{dag['dag_id']}\n"
+            f"调度：{dag.get('schedule', '未指定')}\n"
+            f"任务：{tasks or '无'}\n"
+            "下一步可以校验、提交或触发运行。"
+        )
+        response = self._response(
+            "dag_generate",
+            answer,
+            cards=[{"card_type": "dag_definition", "dag": dag}],
+            actions=[
+                {"label": "校验 DAG", "action": "dag_validate"},
+                {"label": "提交 DAG", "action": "dag_submit"},
+            ],
+            data={"dag": dag},
+        )
+        return {
+            "response": response,
+            "dag_definition": dag["dag_definition"],
+            "dag_id": dag["dag_id"],
+            "dag_status": dag,
+            **batch.state_update(),
+        }
+
+    def validate_dag(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `validate_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _dag_definition, _response, call, state_update。
+        """
+        dag_definition = self._dag_definition(state)
+        if not dag_definition:
+            return self._ask_for(
+                state,
+                "dag_validate",
+                "当前没有可校验的 DAG 定义，请先生成或提供 DAG。",
+            )
+        batch = self._batch(state)
+        result = batch.call(
+            "validate_dag",
+            dag_definition=dag_definition,
+            env=state.get("entities", {}).get("env", "prod"),
+        )
+        answer = (
+            f"DAG 校验结果：{'通过' if result.get('valid') else '未通过'}\n"
+            f"错误：{'；'.join(result.get('errors', [])) or '无'}\n"
+            f"警告：{'；'.join(result.get('warnings', [])) or '无'}"
+        )
+        response = self._response(
+            "dag_validate",
+            answer,
+            cards=[{"card_type": "dag_validation", "validation": result}],
+            actions=(
+                [{"label": "提交 DAG", "action": "dag_submit"}]
+                if result.get("valid")
+                else []
+            ),
+            data={"validation": result},
+        )
+        return {"response": response, **batch.state_update()}
+
+    def submit_dag(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `submit_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _dag_definition, _response, call, state_update。
+        """
+        dag_definition = self._dag_definition(state)
+        if not dag_definition:
+            return self._ask_for(
+                state,
+                "dag_submit",
+                "当前没有可提交的 DAG 定义，请先生成或提供 DAG。",
+            )
+        batch = self._batch(state)
+        env = state.get("entities", {}).get("env", "prod")
+        validation = batch.call(
+            "validate_dag",
+            dag_definition=dag_definition,
+            env=env,
+        )
+        if not validation.get("valid"):
+            response = self._response(
+                "dag_submit",
+                "DAG 校验未通过，已阻止提交。\n错误："
+                + ("；".join(validation.get("errors", [])) or "未知错误"),
+                data={"validation": validation},
+            )
+            return {"response": response, **batch.state_update()}
+        submission = batch.call(
+            "submit_dag",
+            dag_definition=dag_definition,
+            env=env,
+        )
+        response = self._response(
+            "dag_submit",
+            f"DAG 已提交：{submission['dag_id']}\n"
+            f"状态：{submission['status']}\n"
+            f"环境：{submission['env']}\n"
+            f"版本：{submission.get('version', '未返回')}",
+            cards=[{"card_type": "dag_submission", "submission": submission}],
+            actions=[
+                {
+                    "label": "触发 DAG",
+                    "action": "dag_trigger",
+                    "dag_id": submission["dag_id"],
+                }
+            ],
+            data={"submission": submission},
+        )
+        return {
+            "response": response,
+            "dag_id": submission["dag_id"],
+            "dag_status": submission,
+            **batch.state_update(),
+        }
+
+    def trigger_dag(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `trigger_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _dag_id, _response, call, state_update。
+        """
+        dag_id = self._dag_id(state)
+        if not dag_id:
+            return self._ask_for(
+                state,
+                "dag_trigger",
+                "请提供需要触发的 DAG ID，例如 dag_orders。",
+            )
+        batch = self._batch(state)
+        run = batch.call(
+            "trigger_dag",
+            dag_id=dag_id,
+            logical_date=state.get("entities", {}).get("logical_date"),
+            conf={},
+        )
+        response = self._response(
+            "dag_trigger",
+            f"DAG 已触发：{dag_id}\n"
+            f"Run ID：{run['run_id']}\n"
+            f"状态：{run['status']}",
+            cards=[{"card_type": "dag_run", "run": run}],
+            actions=[
+                {
+                    "label": "查询状态",
+                    "action": "dag_status",
+                    "dag_id": dag_id,
+                }
+            ],
+            data={"run": run},
+        )
+        return {
+            "response": response,
+            "dag_id": dag_id,
+            "dag_run": run,
+            **batch.state_update(),
+        }
+
+    def dag_status(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `dag_status` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _dag_id, _response, call, state_update。
+        """
+        dag_id = self._dag_id(state)
+        if not dag_id:
+            return self._ask_for(
+                state,
+                "dag_status",
+                "请提供需要查询的 DAG ID，例如 dag_orders。",
+            )
+        batch = self._batch(state)
+        status = batch.call("get_dag_status", dag_id=dag_id)
+        response = self._response(
+            "dag_status",
+            f"DAG：{dag_id}\n"
+            f"当前状态：{status.get('status', 'unknown')}\n"
+            f"最近 Run：{status.get('last_run_id', '未返回')}\n"
+            f"最近 Run 状态：{status.get('last_run_status', '未知')}",
+            cards=[{"card_type": "dag_status", "status": status}],
+            data={"dag_status": status},
+        )
+        return {
+            "response": response,
+            "dag_id": dag_id,
+            "dag_status": status,
+            **batch.state_update(),
+        }
+
+    def backfill_dag(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `backfill_dag` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_ask_for, _batch, _dag_id, _response, call, state_update。
+        """
+        dag_id = self._dag_id(state)
+        start_date = state.get("entities", {}).get("start_date")
+        end_date = state.get("entities", {}).get("end_date")
+        if not dag_id or not start_date or not end_date:
+            return self._ask_for(
+                state,
+                "dag_backfill",
+                "请提供 DAG ID、开始日期和结束日期，例如 "
+                "dag_orders 回填 2026-09-01 到 2026-09-03。",
+            )
+        batch = self._batch(state)
+        result = batch.call(
+            "backfill_dag",
+            dag_id=dag_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        response = self._response(
+            "dag_backfill",
+            f"DAG：{dag_id}\n"
+            f"回填区间：{start_date} 至 {end_date}\n"
+            f"任务 ID：{result['backfill_id']}\n"
+            f"状态：{result['status']}",
+            cards=[{"card_type": "dag_backfill", "backfill": result}],
+            data={"dag_backfill": result},
+        )
+        return {
+            "response": response,
+            "dag_id": dag_id,
+            "dag_backfill": result,
+            **batch.state_update(),
+        }
+
     def unknown(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `unknown` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_response。
+        """
         answer = (
             "我可以帮助你：查找和理解数据资产、解释字段和指标、查询或申请权限、"
             "解释角色、分析并优化 SQL、执行只读查询、解释查询结果以及辅助审批。"
@@ -892,6 +1224,10 @@ class AgentNodes:
         return {"response": response}
 
     def finalize(self, state: AgentState) -> dict[str, Any]:
+        """作用：负责 `finalize` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：_now。
+        """
         response = state.get("response") or {
             "type": "unknown",
             "answer": "任务未产生结果。",
@@ -909,6 +1245,10 @@ class AgentNodes:
     def _load_sql_context(
         self, batch: ToolBatch, tables: list[str]
     ) -> dict[str, Any]:
+        """作用：负责 `_load_sql_context` 对应的处理。
+        上游：AgentNodes.analyze_sql, AgentNodes.optimize_sql。
+        下游：call。
+        """
         context: dict[str, Any] = {"ddl": {}, "indexes": {}, "statistics": {}}
         for table in tables:
             ddl = batch.call("get_table_ddl", table=table)
@@ -922,6 +1262,10 @@ class AgentNodes:
         return context
 
     def _batch(self, state: AgentState) -> ToolBatch:
+        """作用：负责 `_batch` 对应的处理。
+        上游：AgentNodes.analyze_sql, AgentNodes.apply_permission, AgentNodes.approval_context, AgentNodes.approval_risk, AgentNodes.backfill_dag, AgentNodes.check_permission, AgentNodes.dag_status, AgentNodes.discover_assets, AgentNodes.execute_query, AgentNodes.explain_columns, AgentNodes.explain_metric, AgentNodes.explain_query_result, AgentNodes.explain_role, AgentNodes.explain_table, AgentNodes.generate_dag, AgentNodes.optimize_sql, AgentNodes.permission_history, AgentNodes.prepare_query, AgentNodes.submit_dag, AgentNodes.ticket_status, AgentNodes.trigger_dag, AgentNodes.validate_dag。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return ToolBatch(
             self.tools,
             user_id=state["user_id"],
@@ -931,6 +1275,10 @@ class AgentNodes:
         )
 
     def _resource_name(self, state: AgentState) -> str | None:
+        """作用：负责 `_resource_name` 对应的处理。
+        上游：AgentNodes.explain_columns, AgentNodes.explain_table。
+        下游：_resource。
+        """
         resource = self._resource(state)
         if not resource:
             return None
@@ -942,6 +1290,10 @@ class AgentNodes:
 
     @staticmethod
     def _resource(state: AgentState) -> dict[str, Any] | None:
+        """作用：负责 `_resource` 对应的处理。
+        上游：AgentNodes._resource_name, AgentNodes.apply_permission, AgentNodes.check_permission, AgentNodes.permission_history。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         resource = state.get("entities", {}).get("resource")
         if resource:
             return resource
@@ -953,10 +1305,58 @@ class AgentNodes:
 
     @staticmethod
     def _sql(state: AgentState) -> str | None:
+
+        """作用：负责 `_sql` 对应的处理。
+        上游：AgentNodes.analyze_sql, AgentNodes.execute_query, AgentNodes.optimize_sql, AgentNodes.prepare_query。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return state.get("entities", {}).get("sql") or state.get("generated_sql")
 
     @staticmethod
+    def _dag_id(state: AgentState) -> str | None:
+        """作用：负责 `_dag_id` 对应的处理。
+        上游：AgentNodes.backfill_dag, AgentNodes.dag_status, AgentNodes.trigger_dag。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        return (
+            state.get("entities", {}).get("dag_id")
+            or state.get("dag_id")
+        )
+
+    @staticmethod
+    def _dag_definition(state: AgentState) -> str | None:
+        """作用：负责 `_dag_definition` 对应的处理。
+        上游：AgentNodes.submit_dag, AgentNodes.validate_dag。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        definition = state.get("dag_definition")
+        if definition:
+            return definition
+        message = state.get("message", "").strip()
+        return message or None
+
+    @staticmethod
+    def _dag_schedule(message: str) -> str:
+        """作用：负责 `_dag_schedule` 对应的处理。
+        上游：AgentNodes.generate_dag。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        if "凌晨 2" in message or "凌晨2" in message:
+            return "0 2 * * *"
+        if "每天" in message or "每日" in message:
+            return "0 0 * * *"
+        if "每周" in message:
+            return "0 0 * * 1"
+        if "每月" in message:
+            return "0 0 1 * *"
+        return "0 0 * * *"
+
+    @staticmethod
     def _infer_table_for_columns(columns: list[str]) -> str | None:
+        """作用：负责 `_infer_table_for_columns` 对应的处理。
+        上游：AgentNodes.explain_columns。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         order_columns = {
             "order_id",
             "user_id",
@@ -983,6 +1383,10 @@ class AgentNodes:
         actions: list[dict[str, Any]] | None = None,
         data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """作用：负责 `_response` 对应的处理。
+        上游：AgentNodes._ask_for, AgentNodes.analyze_sql, AgentNodes.apply_permission, AgentNodes.approval_context, AgentNodes.approval_risk, AgentNodes.backfill_dag, AgentNodes.check_permission, AgentNodes.dag_status, AgentNodes.discover_assets, AgentNodes.execute_query, AgentNodes.explain_columns, AgentNodes.explain_metric, AgentNodes.explain_query_result, AgentNodes.explain_role, AgentNodes.explain_table, AgentNodes.generate_dag, AgentNodes.optimize_sql, AgentNodes.permission_history, AgentNodes.prepare_query, AgentNodes.submit_dag, AgentNodes.ticket_status, AgentNodes.trigger_dag, AgentNodes.unknown, AgentNodes.validate_dag。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return {
             "type": response_type,
             "answer": answer,
@@ -994,10 +1398,19 @@ class AgentNodes:
     def _ask_for(
         self, state: AgentState, response_type: str, answer: str
     ) -> dict[str, Any]:
+
+        """作用：负责 `_ask_for` 对应的处理。
+        上游：AgentNodes.analyze_sql, AgentNodes.apply_permission, AgentNodes.approval_context, AgentNodes.approval_risk, AgentNodes.backfill_dag, AgentNodes.check_permission, AgentNodes.dag_status, AgentNodes.execute_query, AgentNodes.explain_columns, AgentNodes.explain_metric, AgentNodes.explain_query_result, AgentNodes.explain_role, AgentNodes.explain_table, AgentNodes.optimize_sql, AgentNodes.prepare_query, AgentNodes.submit_dag, AgentNodes.ticket_status, AgentNodes.trigger_dag, AgentNodes.validate_dag。
+        下游：_response。
+        """
         return {"response": self._response(response_type, answer)}
 
     @staticmethod
     def _confirmed(decision: Any) -> bool:
+        """作用：负责 `_confirmed` 对应的处理。
+        上游：AgentNodes._confirmed, AgentNodes.apply_permission。
+        下游：_confirmed。
+        """
         if decision is True:
             return True
         if isinstance(decision, str):
@@ -1009,6 +1422,10 @@ class AgentNodes:
 
     @staticmethod
     def _duration_decision(decision: Any, *, recommended: int) -> int:
+        """作用：负责 `_duration_decision` 对应的处理。
+        上游：AgentNodes.apply_permission。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         allowed = {7, 15, 30}
         if isinstance(decision, dict):
             decision = decision.get("duration_days")
@@ -1023,6 +1440,10 @@ class AgentNodes:
 
     @staticmethod
     def _role_decision(decision: Any, roles: list[dict[str, Any]]) -> str:
+        """作用：负责 `_role_decision` 对应的处理。
+        上游：AgentNodes.apply_permission。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         if isinstance(decision, dict):
             decision = decision.get("role_id")
         value = str(decision or "").strip()

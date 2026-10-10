@@ -22,6 +22,8 @@ SQL_START_PATTERN = re.compile(r"\b(select|with)\b", re.IGNORECASE)
 ROLE_PATTERN = re.compile(r"\b(r_[a-zA-Z0-9_]+)\b")
 TICKET_PATTERN = re.compile(r"\b(T\d{8,})\b", re.IGNORECASE)
 DURATION_PATTERN = re.compile(r"(\d+)\s*(?:天|日|days?)", re.IGNORECASE)
+DAG_PATTERN = re.compile(r"\b(dag_[a-zA-Z0-9_-]+)\b", re.IGNORECASE)
+DATE_PATTERN = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
 
 
 class IntentRouter(Protocol):
@@ -30,7 +32,12 @@ class IntentRouter(Protocol):
         message: str,
         context: dict[str, Any] | None = None,
         previous_state: dict[str, Any] | None = None,
-    ) -> IntentResult: ...
+    ) -> IntentResult:
+        """作用：负责 `route` 对应的处理。
+        上游：AgentNodes.route, LlmIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        ...
 
 
 class RuleBasedIntentRouter:
@@ -42,6 +49,10 @@ class RuleBasedIntentRouter:
         context: dict[str, Any] | None = None,
         previous_state: dict[str, Any] | None = None,
     ) -> IntentResult:
+        """作用：负责 `route` 对应的处理。
+        上游：AgentNodes.route, LlmIntentRouter.route。
+        下游：_classify, _extract_action, _extract_columns, _extract_dag_id, _extract_duration, _extract_env, _extract_metric, _extract_reason, _extract_role, _extract_sql, _extract_tables, _extract_ticket, _is_confirmation。
+        """
         context = context or {}
         previous_state = previous_state or {}
         text = message.strip()
@@ -52,6 +63,8 @@ class RuleBasedIntentRouter:
         metric = self._extract_metric(text)
         role_id = self._extract_role(text)
         ticket_id = self._extract_ticket(text)
+        dag_id = self._extract_dag_id(text)
+        dates = DATE_PATTERN.findall(text)
         action = self._extract_action(lower)
         env = self._extract_env(lower, context)
         duration_days = self._extract_duration(text, previous_state)
@@ -69,6 +82,10 @@ class RuleBasedIntentRouter:
             "metric": metric,
             "role_id": role_id,
             "ticket_id": ticket_id,
+            "dag_id": dag_id,
+            "logical_date": dates[0] if dates else None,
+            "start_date": dates[0] if len(dates) > 1 else None,
+            "end_date": dates[1] if len(dates) > 1 else None,
             "action": action,
             "env": env,
             "duration_days": duration_days,
@@ -107,6 +124,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_tables(text: str) -> list[str]:
+        """作用：负责 `_extract_tables` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         result: list[str] = []
         for match in TABLE_PATTERN.findall(text):
             name = match.lower()
@@ -116,6 +137,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_sql(text: str, previous_state: dict[str, Any]) -> str | None:
+        """作用：负责 `_extract_sql` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         block = SQL_BLOCK_PATTERN.search(text)
         if block:
             return block.group(1).strip()
@@ -131,6 +156,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_columns(text: str) -> list[str]:
+        """作用：负责 `_extract_columns` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         quoted = re.findall(r"`([a-zA-Z_][a-zA-Z0-9_]*)`", text)
         if quoted:
             return list(dict.fromkeys(quoted))
@@ -152,6 +181,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_metric(text: str) -> str | None:
+        """作用：负责 `_extract_metric` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         lower = text.lower()
         if re.search(r"\bgmv\b", lower):
             return "gmv"
@@ -163,6 +196,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_role(text: str) -> str | None:
+        """作用：负责 `_extract_role` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         role = ROLE_PATTERN.search(text)
         if role:
             return role.group(1)
@@ -174,11 +211,28 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_ticket(text: str) -> str | None:
+        """作用：负责 `_extract_ticket` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         ticket = TICKET_PATTERN.search(text)
         return ticket.group(1) if ticket else None
 
     @staticmethod
+    def _extract_dag_id(text: str) -> str | None:
+        """作用：负责 `_extract_dag_id` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
+        dag = DAG_PATTERN.search(text)
+        return dag.group(1) if dag else None
+
+    @staticmethod
     def _extract_action(lower: str) -> str:
+        """作用：负责 `_extract_action` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         if "export" in lower or "导出" in lower:
             return "export"
         if "download" in lower or "下载" in lower:
@@ -191,6 +245,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_env(lower: str, context: dict[str, Any]) -> str:
+        """作用：负责 `_extract_env` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         if any(token in lower for token in ["生产", "线上", "prod"]):
             return "prod"
         if any(token in lower for token in ["预发", "staging", "stage"]):
@@ -201,6 +259,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_duration(text: str, previous_state: dict[str, Any]) -> int | None:
+        """作用：负责 `_extract_duration` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         match = DURATION_PATTERN.search(text)
         if match:
             return int(match.group(1))
@@ -209,6 +271,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _extract_reason(text: str) -> str:
+        """作用：负责 `_extract_reason` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         match = re.search(r"(?:用于|用途是|申请理由[:：])\s*(.+)$", text)
         if match:
             return match.group(1).strip("。 ")
@@ -216,6 +282,10 @@ class RuleBasedIntentRouter:
 
     @staticmethod
     def _is_confirmation(text: str) -> bool:
+        """作用：负责 `_is_confirmation` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return bool(
             re.fullmatch(
                 r"\s*(?:(?:确认|同意)(?:提交)?|提交|申请|好的|可以|是|yes|y|ok)[。！!]?\s*",
@@ -237,10 +307,38 @@ class RuleBasedIntentRouter:
         ticket_id: str | None,
         previous_state: dict[str, Any],
     ) -> tuple[Intent, float, str]:
+        """作用：负责 `_classify` 对应的处理。
+        上游：RuleBasedIntentRouter.route。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         has_sql = bool(sql and SQL_START_PATTERN.search(sql))
         has_slow_word = any(word in lower for word in ["慢", "性能", "explain", "扫描", "瓶颈"])
         has_optimize_word = any(word in lower for word in ["优化", "重写", "改写"])
         has_execute_word = any(word in lower for word in ["执行", "跑一下", "运行", "查询一下"])
+
+        has_dag_word = "dag" in lower or "工作流" in text
+        if has_dag_word and any(word in text for word in ["回填", "backfill"]):
+            return Intent.DAG_BACKFILL, 0.97, "检测到 DAG 回填请求。"
+        if has_dag_word and any(
+            word in text for word in ["状态", "结果", "成功了吗", "失败了吗", "进度"]
+        ):
+            return Intent.DAG_STATUS, 0.96, "检测到 DAG 状态查询。"
+        if has_dag_word and any(
+            word in text for word in ["发布", "提交", "上线", "部署"]
+        ):
+            return Intent.DAG_SUBMIT, 0.95, "检测到 DAG 发布请求。"
+        if has_dag_word and any(
+            word in text for word in ["校验", "检查", "验证"]
+        ):
+            return Intent.DAG_VALIDATE, 0.95, "检测到 DAG 校验请求。"
+        if has_dag_word and any(
+            word in text for word in ["触发", "运行一下", "跑一下", "立即执行"]
+        ):
+            return Intent.DAG_TRIGGER, 0.95, "检测到 DAG 触发请求。"
+        if has_dag_word and any(
+            word in text for word in ["生成", "创建", "新建", "写一个", "设计"]
+        ):
+            return Intent.DAG_GENERATE, 0.96, "检测到 DAG 生成请求。"
 
         if has_sql and has_optimize_word:
             return Intent.SQL_REWRITE if "重写" in text or "改写" in text else Intent.SQL_OPTIMIZE, 0.97, "检测到 SQL 和优化要求。"
@@ -309,6 +407,10 @@ class LlmIntentRouter:
         fallback: IntentRouter | None = None,
         minimum_confidence: float = 0.55,
     ) -> None:
+        """作用：负责 `__init__` 对应的处理。
+        上游：PlatformAPIError.__init__。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         self.model = model
         self.fallback = fallback or RuleBasedIntentRouter()
         self.minimum_confidence = minimum_confidence
@@ -319,6 +421,10 @@ class LlmIntentRouter:
         context: dict[str, Any] | None = None,
         previous_state: dict[str, Any] | None = None,
     ) -> IntentResult:
+        """作用：负责 `route` 对应的处理。
+        上游：AgentNodes.route, LlmIntentRouter.route。
+        下游：_extract_json_object, _message_content, _routing_state, invoke, render_intent_prompt, route。
+        """
         context = context or {}
         previous_state = previous_state or {}
         prompt = render_intent_prompt(
@@ -345,6 +451,10 @@ class LlmIntentRouter:
 
 
 def _routing_state(state: dict[str, Any]) -> dict[str, Any]:
+    """作用：负责 `_routing_state` 对应的处理。
+    上游：LlmIntentRouter.route。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     keys = (
         "intent",
         "entities",
@@ -359,6 +469,10 @@ def _routing_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _message_content(response: Any) -> str:
+    """作用：负责 `_message_content` 对应的处理。
+    上游：LlmIntentRouter.route。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     content = getattr(response, "content", response)
     if isinstance(content, str):
         return content
@@ -374,6 +488,10 @@ def _message_content(response: Any) -> str:
 
 
 def _extract_json_object(content: str) -> dict[str, Any]:
+    """作用：负责 `_extract_json_object` 对应的处理。
+    上游：LlmIntentRouter.route。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     text = content.strip()
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S | re.I)
     if fenced:

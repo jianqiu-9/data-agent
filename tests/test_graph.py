@@ -226,3 +226,29 @@ def test_user_without_roles_does_not_create_ticket() -> None:
     assert result["status"] == "completed"
     assert result["response"]["data"]["reason"] == "no_available_role"
     assert "没有可用角色" in result["response"]["answer"]
+
+
+def test_dag_generation_and_status_flow() -> None:
+    runtime, _ = make_runtime()
+    session_id = "s-dag"
+
+    generated = runtime.chat(
+        user_id="u123",
+        session_id=session_id,
+        message="帮我生成一个每天凌晨 2 点同步订单的 DAG",
+    )
+
+    assert generated["status"] == "completed"
+    assert generated["response"]["type"] == "dag_generate"
+    assert "generate_dag" in generated["tool_calls"]
+    dag_id = generated["response"]["data"]["dag"]["dag_id"]
+
+    status = runtime.chat(
+        user_id="u123",
+        session_id=session_id,
+        message=f"{dag_id} 的运行状态是什么？",
+    )
+
+    assert status["status"] == "completed"
+    assert status["response"]["type"] == "dag_status"
+    assert status["response"]["data"]["dag_status"]["dag_id"] == dag_id

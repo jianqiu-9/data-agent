@@ -32,6 +32,12 @@ INTENT_TO_NODE = {
     Intent.QUERY_EXPLAIN.value: "explain_query_result",
     Intent.APPROVAL_CONTEXT.value: "approval_context",
     Intent.APPROVAL_RISK.value: "approval_risk",
+    Intent.DAG_GENERATE.value: "generate_dag",
+    Intent.DAG_VALIDATE.value: "validate_dag",
+    Intent.DAG_SUBMIT.value: "submit_dag",
+    Intent.DAG_TRIGGER.value: "trigger_dag",
+    Intent.DAG_STATUS.value: "dag_status",
+    Intent.DAG_BACKFILL.value: "backfill_dag",
     Intent.UNKNOWN.value: "unknown",
 }
 
@@ -43,6 +49,10 @@ def build_data_agent_graph(
     audit_sink: Callable[[dict[str, Any]], None] | None = None,
     router: IntentRouter | None = None,
 ):
+    """作用：负责 `build_data_agent_graph` 对应的处理。
+    上游：DataAgentRuntime.__init__。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     registry = ToolRegistry(services, audit_sink=audit_sink)
     nodes = AgentNodes(registry, router=router)
     builder = StateGraph(AgentState)
@@ -66,6 +76,12 @@ def build_data_agent_graph(
     builder.add_node("explain_query_result", nodes.explain_query_result)
     builder.add_node("approval_context", nodes.approval_context)
     builder.add_node("approval_risk", nodes.approval_risk)
+    builder.add_node("generate_dag", nodes.generate_dag)
+    builder.add_node("validate_dag", nodes.validate_dag)
+    builder.add_node("submit_dag", nodes.submit_dag)
+    builder.add_node("trigger_dag", nodes.trigger_dag)
+    builder.add_node("dag_status", nodes.dag_status)
+    builder.add_node("backfill_dag", nodes.backfill_dag)
     builder.add_node("unknown", nodes.unknown)
     builder.add_node("finalize", nodes.finalize)
 
@@ -87,6 +103,12 @@ def build_data_agent_graph(
         "explain_query_result",
         "approval_context",
         "approval_risk",
+        "generate_dag",
+        "validate_dag",
+        "submit_dag",
+        "trigger_dag",
+        "dag_status",
+        "backfill_dag",
         "unknown",
     ):
         builder.add_edge(node, "finalize")
@@ -123,10 +145,19 @@ def build_data_agent_graph(
 
 
 def _route_intent(state: AgentState) -> str:
+
+    """作用：负责 `_route_intent` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return state.get("intent", Intent.UNKNOWN.value)
 
 
 def _after_query_prepare(state: AgentState) -> str:
+    """作用：负责 `_after_query_prepare` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if state.get("_query_ready"):
         return "execute"
     if state.get("_permission_offer_required"):
@@ -135,6 +166,10 @@ def _after_query_prepare(state: AgentState) -> str:
 
 
 def _after_permission_check(state: AgentState) -> str:
+    """作用：负责 `_after_permission_check` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return (
         "request_permission"
         if state.get("_permission_offer_required")
@@ -143,6 +178,11 @@ def _after_permission_check(state: AgentState) -> str:
 
 
 def _after_ticket_status(state: AgentState) -> str:
+
+    """作用：负责 `_after_ticket_status` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return "continue_query" if state.get("_continue_query") else "finish"
 
 
@@ -157,6 +197,10 @@ class DataAgentRuntime:
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
         router: IntentRouter | None = None,
     ) -> None:
+        """作用：负责 `__init__` 对应的处理。
+        上游：PlatformAPIError.__init__。
+        下游：build_data_agent_graph。
+        """
         self.graph = build_data_agent_graph(
             services,
             checkpointer=checkpointer,
@@ -173,6 +217,10 @@ class DataAgentRuntime:
         message: str,
         context: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """作用：负责 `chat` 对应的处理。
+        上游：_ask, _chat。
+        下游：_config, _turn_result, invoke。
+        """
         config = self._config(session_id)
         result = self.graph.invoke(
             {
@@ -193,6 +241,10 @@ class DataAgentRuntime:
         approved: bool | None = None,
         decision: Any | None = None,
     ) -> dict[str, Any]:
+        """作用：负责 `resume` 对应的处理。
+        上游：_handle_turn。
+        下游：_config, _turn_result, invoke。
+        """
         if decision is None:
             decision = {"approved": bool(approved)}
         result = self.graph.invoke(
@@ -202,11 +254,19 @@ class DataAgentRuntime:
         return self._turn_result(result)
 
     def get_state(self, *, session_id: str) -> dict[str, Any]:
+        """作用：负责 `get_state` 对应的处理。
+        上游：DataAgentRuntime.get_state。
+        下游：_config, get_state。
+        """
         snapshot = self.graph.get_state(self._config(session_id))
         return dict(snapshot.values)
 
     @staticmethod
     def _turn_result(result: dict[str, Any]) -> dict[str, Any]:
+        """作用：负责 `_turn_result` 对应的处理。
+        上游：DataAgentRuntime.chat, DataAgentRuntime.resume。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         if "__interrupt__" in result:
             interrupts = result["__interrupt__"]
             value = interrupts[0].value if interrupts else {}
@@ -225,6 +285,10 @@ class DataAgentRuntime:
         }
 
     def _config(self, session_id: str) -> dict[str, Any]:
+        """作用：负责 `_config` 对应的处理。
+        上游：DataAgentRuntime.chat, DataAgentRuntime.get_state, DataAgentRuntime.resume。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         if session_id not in self._configs:
             self._configs[session_id] = {
                 "configurable": {"thread_id": session_id}

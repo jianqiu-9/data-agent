@@ -17,6 +17,7 @@ SYSTEM_PROMPT = """你是企业数据平台 Data Agent。
 4. 分析、诊断、重写和优化 SQL。
 5. 执行只读查询并解释真实查询结果。
 6. 汇总审批上下文、历史权限和风险。
+7. 生成、校验、提交、触发和回填数据平台 DAG。
 
 硬性规则：
 1. 所有平台事实必须来自工具结果，不得编造表、字段、指标、权限、角色或查询结果。
@@ -32,7 +33,7 @@ SYSTEM_PROMPT = """你是企业数据平台 Data Agent。
 
 INTENT_SCHEMA_PROMPT = """只输出一个 JSON 对象，不要输出 Markdown：
 {
-  "intent": "data_discovery|table_explain|column_explain|metric_explain|permission_check|permission_apply|permission_history|ticket_status|role_explain|sql_analyze|sql_optimize|sql_rewrite|query_execute|query_explain|approval_context|approval_risk|unknown",
+  "intent": "data_discovery|table_explain|column_explain|metric_explain|permission_check|permission_apply|permission_history|ticket_status|role_explain|sql_analyze|sql_optimize|sql_rewrite|query_execute|query_explain|approval_context|approval_risk|dag_generate|dag_validate|dag_submit|dag_trigger|dag_status|dag_backfill|unknown",
   "confidence": 0.0,
   "entities": {
     "resources": [],
@@ -41,6 +42,9 @@ INTENT_SCHEMA_PROMPT = """只输出一个 JSON 对象，不要输出 Markdown：
     "metric": null,
     "role_id": null,
     "ticket_id": null,
+    "dag_id": null,
+    "start_date": null,
+    "end_date": null,
     "action": "select",
     "env": "prod",
     "duration_days": null,
@@ -67,6 +71,10 @@ class PromptTemplate:
     template: str
 
     def render(self, **values: Any) -> str:
+        """作用：负责 `render` 对应的处理。
+        上游：render_intent_prompt, render_prompt。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         values.setdefault("system_prompt", SYSTEM_PROMPT)
         return Template(self.template).substitute(values).strip()
 
@@ -447,6 +455,126 @@ $output_rules
 $output_rules
 """,
     ),
+    Intent.DAG_GENERATE: PromptTemplate(
+        "dag_generate",
+        """$system_prompt
+
+任务：根据业务目标生成数据工作流 DAG。
+用户问题：$message
+已识别实体：$entities
+工具结果：$tool_results
+
+执行顺序：
+1. 调用 generate_dag，传入业务目标、调度表达式、Owner 和资源。
+2. 检查返回的 tasks 和 dependencies。
+3. 不得编造 DAG ID、任务节点或调度表达式。
+
+输出：
+- DAG ID、调度周期、Owner。
+- 任务节点和依赖关系。
+- 生成后的下一步：校验、提交或触发。
+$output_rules
+""",
+    ),
+    Intent.DAG_VALIDATE: PromptTemplate(
+        "dag_validate",
+        """$system_prompt
+
+任务：校验 DAG 定义。
+用户问题：$message
+当前任务状态：$task_state
+工具结果：$tool_results
+
+执行顺序：
+1. 优先使用 state.dag_definition。
+2. 调用 validate_dag。
+3. 区分 valid、errors 和 warnings，不得把 warning 描述成错误。
+
+输出：
+- 是否通过校验。
+- 错误列表和修复建议。
+- 风险提示。
+$output_rules
+""",
+    ),
+    Intent.DAG_SUBMIT: PromptTemplate(
+        "dag_submit",
+        """$system_prompt
+
+任务：提交或发布 DAG。
+用户问题：$message
+当前任务状态：$task_state
+工具结果：$tool_results
+
+执行顺序：
+1. 调用 validate_dag；校验失败时不得直接提交。
+2. 调用 submit_dag。
+3. 返回真实 dag_id、version、status。
+
+输出：
+- 提交状态、DAG ID、版本和环境。
+- 失败时说明原因和重试方式。
+$output_rules
+""",
+    ),
+    Intent.DAG_TRIGGER: PromptTemplate(
+        "dag_trigger",
+        """$system_prompt
+
+任务：触发 DAG 运行。
+用户问题：$message
+已识别实体：$entities
+工具结果：$tool_results
+
+执行顺序：
+1. 获取 dag_id 和 logical_date。
+2. 调用 trigger_dag。
+3. 返回真实 run_id 和状态。
+
+输出：
+- DAG ID、run ID、业务日期和运行状态。
+$output_rules
+""",
+    ),
+    Intent.DAG_STATUS: PromptTemplate(
+        "dag_status",
+        """$system_prompt
+
+任务：查询 DAG 或 DAG Run 状态。
+用户问题：$message
+已识别实体：$entities
+工具结果：$tool_results
+
+执行顺序：
+1. 获取 dag_id。
+2. 调用 get_dag_status。
+3. 只返回工具真实状态，不根据运行时间猜测成功与否。
+
+输出：
+- DAG ID、当前状态、最近 run ID 和状态。
+- 失败时提示查看日志、重试或回填。
+$output_rules
+""",
+    ),
+    Intent.DAG_BACKFILL: PromptTemplate(
+        "dag_backfill",
+        """$system_prompt
+
+任务：创建 DAG 历史数据回填任务。
+用户问题：$message
+已识别实体：$entities
+工具结果：$tool_results
+
+执行顺序：
+1. 获取 dag_id、start_date 和 end_date。
+2. 日期缺失时先向用户确认，不得猜测。
+3. 调用 backfill_dag 并返回真实任务 ID。
+
+输出：
+- DAG ID、回填区间、backfill ID、状态和预计运行次数。
+$output_rules
+""",
+    ),
     Intent.UNKNOWN: PromptTemplate(
         "unknown",
         """$system_prompt
@@ -471,6 +599,10 @@ $output_rules
 
 
 def render_prompt(intent: Intent | str, **values: Any) -> str:
+    """作用：负责 `render_prompt` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：render。
+    """
     intent_value = intent if isinstance(intent, Intent) else Intent(intent)
     template = PROMPT_REGISTRY.get(intent_value, PROMPT_REGISTRY[Intent.UNKNOWN])
     values.setdefault("output_rules", _OUTPUT_RULES.strip())
@@ -494,5 +626,9 @@ $intent_schema
 
 
 def render_intent_prompt(**values: Any) -> str:
+    """作用：负责 `render_intent_prompt` 对应的处理。
+    上游：LlmIntentRouter.route。
+    下游：render。
+    """
     values.setdefault("intent_schema", INTENT_SCHEMA_PROMPT)
     return INTENT_ROUTER_PROMPT.render(**values)

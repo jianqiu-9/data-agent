@@ -40,3 +40,24 @@ def test_router_accepts_preview_confirmation_text() -> None:
     )
 
     assert result.intent == Intent.PERMISSION_APPLY
+
+
+def test_router_detects_dag_generation() -> None:
+    result = RuleBasedIntentRouter().route(
+        "帮我生成一个每天同步订单的 DAG"
+    )
+
+    assert result.intent == Intent.DAG_GENERATE
+
+
+def test_router_detects_dag_status() -> None:
+    result = RuleBasedIntentRouter().route("dag_orders 的运行状态是什么？")
+
+    assert result.intent == Intent.DAG_STATUS
+    assert result.entities["dag_id"] == "dag_orders"
+
+
+def test_router_detects_dag_backfill() -> None:
+    result = RuleBasedIntentRouter().route("帮我把 DAG 回填到 9 月 3 日")
+
+    assert result.intent == Intent.DAG_BACKFILL

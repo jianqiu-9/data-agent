@@ -24,6 +24,12 @@ class Intent(StrEnum):
     QUERY_EXPLAIN = "query_explain"
     APPROVAL_CONTEXT = "approval_context"
     APPROVAL_RISK = "approval_risk"
+    DAG_GENERATE = "dag_generate"
+    DAG_VALIDATE = "dag_validate"
+    DAG_SUBMIT = "dag_submit"
+    DAG_TRIGGER = "dag_trigger"
+    DAG_STATUS = "dag_status"
+    DAG_BACKFILL = "dag_backfill"
     UNKNOWN = "unknown"
 
 
@@ -51,13 +57,28 @@ class ResourceRef(BaseModel):
     @field_validator("name")
     @classmethod
     def clean_name(cls, value: str) -> str:
+
+        """作用：负责 `clean_name` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return value.strip().strip("`")
 
     @property
     def qualified_name(self) -> str:
+
+        """作用：负责 `qualified_name` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return f"{self.database}.{self.name}" if self.database else self.name
 
     def to_dict(self) -> dict[str, Any]:
+
+        """作用：负责 `to_dict` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return self.model_dump(mode="json")
 
 
@@ -76,6 +97,11 @@ class AgentResponse(BaseModel):
     data: dict[str, Any] = Field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+
+        """作用：负责 `to_dict` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return self.model_dump(mode="json")
 
 
@@ -96,4 +122,9 @@ class AuditEvent(BaseModel):
     query_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+
+        """作用：负责 `to_dict` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return self.model_dump(mode="json")

@@ -4,6 +4,10 @@ from typing import Any
 
 
 def format_asset_search(result: dict[str, Any]) -> str:
+    """作用：负责 `format_asset_search` 对应的处理。
+    上游：AgentNodes.discover_assets。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     assets = result.get("assets", [])
     if not assets:
         return "数据目录中没有找到匹配的数据资产。"
@@ -24,6 +28,10 @@ def format_asset_search(result: dict[str, Any]) -> str:
 
 
 def format_table_metadata(metadata: dict[str, Any]) -> str:
+    """作用：负责 `format_table_metadata` 对应的处理。
+    上游：AgentNodes.explain_table。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if not metadata.get("found"):
         return metadata.get("message", f"未找到 {metadata.get('resource', '目标表')}。")
     fields = metadata.get("fields", [])[:8]
@@ -45,6 +53,10 @@ def format_table_metadata(metadata: dict[str, Any]) -> str:
 def format_columns(
     table: str, columns: list[dict[str, Any]], field_names: list[str]
 ) -> str:
+    """作用：负责 `format_columns` 对应的处理。
+    上游：AgentNodes.explain_columns。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if not columns:
         return f"未找到 {table} 中字段 {', '.join(field_names)} 的元数据。"
     lines = [f"{table} 字段说明："]
@@ -59,6 +71,10 @@ def format_columns(
 
 
 def format_metric(metric: dict[str, Any]) -> str:
+    """作用：负责 `format_metric` 对应的处理。
+    上游：AgentNodes.explain_metric。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return (
         f"指标：{metric['metric_name']}\n"
         f"定义：{metric['definition']}\n"
@@ -72,6 +88,10 @@ def format_metric(metric: dict[str, Any]) -> str:
 
 
 def format_permission(result: dict[str, Any]) -> str:
+    """作用：负责 `format_permission` 对应的处理。
+    上游：AgentNodes.check_permission。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if result.get("has_permission"):
         return (
             f"有权限。\n\n"
@@ -91,6 +111,10 @@ def format_permission(result: dict[str, Any]) -> str:
 
 
 def format_permission_preview(preview: dict[str, Any]) -> str:
+    """作用：负责 `format_permission_preview` 对应的处理。
+    上游：AgentNodes.prepare_query。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     resource = preview.get("resource", {})
     resource_name = (
         resource.get("qualified_name")
@@ -110,6 +134,10 @@ def format_permission_preview(preview: dict[str, Any]) -> str:
 
 
 def format_permission_history(result: dict[str, Any]) -> str:
+    """作用：负责 `format_permission_history` 对应的处理。
+    上游：AgentNodes.permission_history。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     history = result.get("history", [])
     if not history:
         return "没有查询到相关历史权限记录。"
@@ -125,6 +153,10 @@ def format_permission_history(result: dict[str, Any]) -> str:
 
 
 def format_role(role: dict[str, Any]) -> str:
+    """作用：负责 `format_role` 对应的处理。
+    上游：AgentNodes.explain_role。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     return (
         f"角色：{role['role_name']}（{role['role_id']}）\n\n"
         f"含义：{role['meaning']}\n"
@@ -144,6 +176,10 @@ def format_sql_analysis(
     context: dict[str, Any],
     explain: dict[str, Any],
 ) -> str:
+    """作用：负责 `format_sql_analysis` 对应的处理。
+    上游：AgentNodes.analyze_sql。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if not validation.get("valid"):
         return "SQL 校验未通过：\n" + "\n".join(
             f"- {error}" for error in validation.get("errors", [])
@@ -176,6 +212,10 @@ def format_sql_analysis(
 
 
 def format_optimization(analysis: dict[str, Any]) -> str:
+    """作用：负责 `format_optimization` 对应的处理。
+    上游：AgentNodes.optimize_sql。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     issues = analysis.get("issues", [])
     issue_lines = "\n".join(f"- {item}" for item in issues) or "- 未发现明显结构性问题"
     index_lines = "\n".join(
@@ -197,6 +237,10 @@ def format_optimization(analysis: dict[str, Any]) -> str:
 
 
 def format_query_result(result: dict[str, Any]) -> str:
+    """作用：负责 `format_query_result` 对应的处理。
+    上游：AgentNodes.execute_query。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if result.get("status") != "succeeded":
         return (
             "查询未执行："
@@ -224,6 +268,10 @@ def format_query_result(result: dict[str, Any]) -> str:
 
 
 def format_query_explanation(result: dict[str, Any], question: str) -> str:
+    """作用：负责 `format_query_explanation` 对应的处理。
+    上游：AgentNodes.explain_query_result。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     rows = result.get("rows", [])
     if not rows:
         return "已获取查询结果，但没有可用于解释的数据行。"
@@ -243,6 +291,10 @@ def format_query_explanation(result: dict[str, Any], question: str) -> str:
 
 
 def format_approval_context(context: dict[str, Any]) -> str:
+    """作用：负责 `format_approval_context` 对应的处理。
+    上游：AgentNodes.approval_context, AgentNodes.approval_risk。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if not context.get("found"):
         return f"未找到工单 {context.get('ticket_id', '')}。"
     ticket = context["ticket"]
@@ -278,6 +330,10 @@ def format_approval_context(context: dict[str, Any]) -> str:
 
 
 def format_ticket_status(ticket: dict[str, Any]) -> str:
+    """作用：负责 `format_ticket_status` 对应的处理。
+    上游：AgentNodes.ticket_status。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if ticket.get("status") == "not_found":
         return f"未找到工单 {ticket.get('ticket_id', '')}。"
     return (

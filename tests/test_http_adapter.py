@@ -152,6 +152,26 @@ def test_tool_registry_binds_user_context_for_http_requests() -> None:
     assert requests[0].headers["X-User-Id"] == "u123"
 
 
+def test_dag_generate_and_status_use_declared_endpoints() -> None:
+    adapter, requests = make_adapter(
+        lambda request: httpx.Response(200, json={"dag_id": "dag_orders"})
+    )
+
+    adapter.generate_dag(
+        goal="每天同步订单",
+        schedule="0 2 * * *",
+        owner="data-agent",
+    )
+    adapter.get_dag_status("dag_orders")
+
+    assert requests[0].method == "POST"
+    assert requests[0].url.path == "/api/v1/dags/generate"
+    assert requests[0].headers["X-User-Id"] == "u123"
+    assert requests[1].method == "GET"
+    assert requests[1].url.path == "/api/v1/dags/dag_orders"
+    assert requests[1].headers["X-User-Id"] == "u123"
+
+
 def test_platform_error_exposes_status_and_body() -> None:
     adapter, _ = make_adapter(
         lambda request: httpx.Response(503, json={"message": "platform unavailable"})

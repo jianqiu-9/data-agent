@@ -41,6 +41,12 @@ TOOL_NAMES = (
     "check_duplicate_permission",
     "analyze_risk",
     "get_approval_history",
+    "generate_dag",
+    "validate_dag",
+    "submit_dag",
+    "trigger_dag",
+    "get_dag_status",
+    "backfill_dag",
 )
 
 
@@ -57,6 +63,10 @@ class ToolRegistry:
         services: PlatformServices,
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
+        """作用：负责 `__init__` 对应的处理。
+        上游：PlatformAPIError.__init__。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         self._services = services
         self._audit_sink = audit_sink
         self._tools = {
@@ -70,6 +80,11 @@ class ToolRegistry:
 
     @property
     def names(self) -> tuple[str, ...]:
+
+        """作用：负责 `names` 对应的处理。
+        上游：外部调用方或框架入口（源码中无直接调用点）。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return tuple(sorted(self._tools))
 
     def invoke(
@@ -82,6 +97,10 @@ class ToolRegistry:
         task_id: str,
         intent: str | None = None,
     ) -> ToolExecution:
+        """作用：负责 `invoke` 对应的处理。
+        上游：DataAgentRuntime.chat, DataAgentRuntime.resume, LlmIntentRouter.route, ToolBatch.call。
+        下游：_audit_event。
+        """
         if tool not in self._tools:
             raise KeyError(f"Unknown platform tool: {tool}")
         started = time.perf_counter()
@@ -129,6 +148,10 @@ class ToolRegistry:
                     self._audit_sink(event)
 
     def _audit_event(self, **kwargs: Any) -> dict[str, Any]:
+        """作用：负责 `_audit_event` 对应的处理。
+        上游：ToolRegistry.invoke。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         request = kwargs["request"]
         response = kwargs["response"]
         sql = request.get("sql")
@@ -171,6 +194,10 @@ class ToolBatch:
         task_id: str,
         intent: str | None,
     ) -> None:
+        """作用：负责 `__init__` 对应的处理。
+        上游：PlatformAPIError.__init__。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         self.registry = registry
         self.user_id = user_id
         self.session_id = session_id
@@ -180,6 +207,10 @@ class ToolBatch:
         self.names: list[str] = []
 
     def call(self, tool: str, **request: Any) -> Any:
+        """作用：负责 `call` 对应的处理。
+        上游：AgentNodes._load_sql_context, AgentNodes.analyze_sql, AgentNodes.apply_permission, AgentNodes.approval_context, AgentNodes.approval_risk, AgentNodes.backfill_dag, AgentNodes.check_permission, AgentNodes.dag_status, AgentNodes.discover_assets, AgentNodes.execute_query, AgentNodes.explain_columns, AgentNodes.explain_metric, AgentNodes.explain_query_result, AgentNodes.explain_role, AgentNodes.explain_table, AgentNodes.generate_dag, AgentNodes.optimize_sql, AgentNodes.permission_history, AgentNodes.prepare_query, AgentNodes.submit_dag, AgentNodes.ticket_status, AgentNodes.trigger_dag, AgentNodes.validate_dag。
+        下游：invoke。
+        """
         execution = self.registry.invoke(
             tool,
             request,
@@ -193,6 +224,10 @@ class ToolBatch:
         return execution.result
 
     def state_update(self) -> dict[str, Any]:
+        """作用：负责 `state_update` 对应的处理。
+        上游：AgentNodes.analyze_sql, AgentNodes.apply_permission, AgentNodes.approval_context, AgentNodes.approval_risk, AgentNodes.backfill_dag, AgentNodes.check_permission, AgentNodes.dag_status, AgentNodes.discover_assets, AgentNodes.execute_query, AgentNodes.explain_columns, AgentNodes.explain_metric, AgentNodes.explain_query_result, AgentNodes.explain_role, AgentNodes.explain_table, AgentNodes.generate_dag, AgentNodes.optimize_sql, AgentNodes.permission_history, AgentNodes.prepare_query, AgentNodes.submit_dag, AgentNodes.ticket_status, AgentNodes.trigger_dag, AgentNodes.validate_dag。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return {
             "audit_events": self.events,
             "tool_calls": self.names,

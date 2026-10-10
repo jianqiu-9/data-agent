@@ -9,6 +9,11 @@ class ApiRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     def payload(self) -> dict[str, Any]:
+
+        """作用：负责 `payload` 对应的处理。
+        上游：HttpPlatformAdapter.analyze_risk, HttpPlatformAdapter.backfill_dag, HttpPlatformAdapter.batch_check_permission, HttpPlatformAdapter.check_duplicate_permission, HttpPlatformAdapter.check_permission, HttpPlatformAdapter.create_permission_ticket, HttpPlatformAdapter.execute_query, HttpPlatformAdapter.explain_sql, HttpPlatformAdapter.generate_dag, HttpPlatformAdapter.get_permission_history, HttpPlatformAdapter.optimize_sql, HttpPlatformAdapter.parse_sql, HttpPlatformAdapter.recommend_data_asset, HttpPlatformAdapter.recommend_permission, HttpPlatformAdapter.rewrite_sql, HttpPlatformAdapter.search_data_assets, HttpPlatformAdapter.search_metrics, HttpPlatformAdapter.submit_dag, HttpPlatformAdapter.trigger_dag, HttpPlatformAdapter.validate_dag, HttpPlatformAdapter.validate_sql。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         return self.model_dump(mode="json", exclude_none=True)
 
 
@@ -157,6 +162,39 @@ class GetApprovalHistoryRequest(ApiRequest):
     ticket_id: str
 
 
+class GenerateDagRequest(ApiRequest):
+    goal: str
+    schedule: str | None = None
+    owner: str | None = None
+    resources: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ValidateDagRequest(ApiRequest):
+    dag_definition: str
+    env: str = "prod"
+
+
+class SubmitDagRequest(ApiRequest):
+    dag_definition: str
+    env: str = "prod"
+
+
+class TriggerDagRequest(ApiRequest):
+    dag_id: str
+    logical_date: str | None = None
+    conf: dict[str, Any] = Field(default_factory=dict)
+
+
+class GetDagStatusRequest(ApiRequest):
+    dag_id: str
+
+
+class BackfillDagRequest(ApiRequest):
+    dag_id: str
+    start_date: str
+    end_date: str
+
+
 class PlatformSettings(BaseModel):
     base_url: str
     token: str | None = None
@@ -170,6 +208,10 @@ class PlatformSettings(BaseModel):
         *,
         prefix: str = "DATA_PLATFORM_",
     ) -> Self:
+        """作用：负责 `from_environment` 对应的处理。
+        上游：HttpPlatformAdapter.from_environment, _add_common_args。
+        下游：无项目内直接调用（通过参数、属性或外部库完成）。
+        """
         import os
 
         values = os.environ if environ is None else environ

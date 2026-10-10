@@ -63,6 +63,10 @@ def _read_chat_input(
 
 
 def _print_turn(result: dict[str, Any], *, as_json: bool = False) -> None:
+    """作用：负责 `_print_turn` 对应的处理。
+    上游：_ask, _chat, _handle_turn。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if as_json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return
@@ -113,6 +117,10 @@ def _handle_turn(
     idle_timeout_seconds: float = 600,
     warning_seconds: float = 120,
 ) -> dict[str, Any]:
+    """作用：负责 `_handle_turn` 对应的处理。
+    上游：_ask, _chat。
+    下游：_automatic_decision, _interactive_decision, _print_turn, resume。
+    """
     while turn["status"] == "interrupted":
         if not as_json or not auto_confirm:
             _print_turn(turn, as_json=as_json)
@@ -134,6 +142,10 @@ def _handle_turn(
 
 
 def _automatic_decision(interrupt: dict[str, Any]) -> dict[str, Any]:
+    """作用：负责 `_automatic_decision` 对应的处理。
+    上游：_handle_turn。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     interrupt_type = interrupt.get("type")
     if interrupt_type == "permission_duration":
         return {"duration_days": interrupt.get("recommended", 7)}
@@ -149,6 +161,10 @@ def _interactive_decision(
     idle_timeout_seconds: float = 600,
     warning_seconds: float = 120,
 ) -> dict[str, Any]:
+    """作用：负责 `_interactive_decision` 对应的处理。
+    上游：_handle_turn。
+    下游：_read_chat_input。
+    """
     interrupt_type = interrupt.get("type")
     if interrupt_type == "permission_duration":
         while True:
@@ -184,6 +200,10 @@ def _interactive_decision(
 
 
 def _runtime(args: argparse.Namespace) -> DataAgentRuntime:
+    """作用：负责 `_runtime` 对应的处理。
+    上游：_ask, _chat。
+    下游：build_intent_router。
+    """
     llm_settings = LLMSettings(
         enabled=args.llm_enabled,
         provider=args.llm_provider,
@@ -215,10 +235,20 @@ def _runtime(args: argparse.Namespace) -> DataAgentRuntime:
             ),
             router=router,
         )
-    return DataAgentRuntime(InMemoryPlatformAdapter(), router=router)
+    random_seed = None
+    if args.mock_random_seed is not None:
+        random_seed = args.mock_random_seed
+    return DataAgentRuntime(
+        InMemoryPlatformAdapter(random_seed=random_seed),
+        router=router,
+    )
 
 
 def _chat(args: argparse.Namespace) -> int:
+    """作用：负责 `_chat` 对应的处理。
+    上游：main。
+    下游：_handle_turn, _print_turn, _read_chat_input, _runtime, chat。
+    """
     runtime = _runtime(args)
     session_id = args.session_id or f"s-{uuid4().hex[:12]}"
     print(f"Data Agent 会话：{session_id}")
@@ -280,6 +310,10 @@ def _chat(args: argparse.Namespace) -> int:
 
 
 def _ask(args: argparse.Namespace) -> int:
+    """作用：负责 `_ask` 对应的处理。
+    上游：main。
+    下游：_handle_turn, _print_turn, _runtime, chat。
+    """
     runtime = _runtime(args)
     session_id = args.session_id or f"s-{uuid4().hex[:12]}"
     turn = runtime.chat(
@@ -304,6 +338,10 @@ def _ask(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """作用：负责 `build_parser` 对应的处理。
+    上游：main。
+    下游：_add_common_args。
+    """
     parser = argparse.ArgumentParser(description="Data platform LangGraph agent")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -322,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _normalize_argv(argv: list[str] | None) -> list[str]:
+    """作用：负责 `_normalize_argv` 对应的处理。
+    上游：main。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     raw = list(sys.argv[1:] if argv is None else argv)
     if not raw:
         return ["chat"]
@@ -333,14 +375,18 @@ def _normalize_argv(argv: list[str] | None) -> list[str]:
 
 
 def _add_common_args(parser: argparse.ArgumentParser) -> None:
+    """作用：负责 `_add_common_args` 对应的处理。
+    上游：build_parser。
+    下游：from_environment。
+    """
     llm_defaults = LLMSettings.from_environment()
     parser.add_argument("--user-id", default="u123", help="当前用户 ID")
     parser.add_argument("--session-id", help="对话会话 ID")
     parser.add_argument(
         "--adapter",
-        default=os.environ.get("DATA_AGENT_ADAPTER", "memory"),
-        choices=["memory", "http"],
-        help="平台适配器：memory 为本地演示，http 为真实 REST 接口",
+        default=os.environ.get("DATA_AGENT_ADAPTER", "mock"),
+        choices=["mock", "memory", "http"],
+        help="平台适配器：mock/memory 为本地演示，http 为真实 REST 接口",
     )
     parser.add_argument(
         "--platform-base-url",
@@ -349,6 +395,16 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--platform-token",
         help="真实平台 Bearer Token",
+    )
+    parser.add_argument(
+        "--mock-random-seed",
+        type=int,
+        default=(
+            int(os.environ["DATA_AGENT_MOCK_RANDOM_SEED"])
+            if os.environ.get("DATA_AGENT_MOCK_RANDOM_SEED")
+            else None
+        ),
+        help="Mock 平台随机种子，用于复现相同结果",
     )
     parser.add_argument(
         "--llm-enabled",
@@ -405,6 +461,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """作用：负责 `main` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：_ask, _chat, _normalize_argv, build_parser。
+    """
     parser = build_parser()
     args = parser.parse_args(_normalize_argv(argv))
     if args.command == "chat":

@@ -28,6 +28,11 @@ class AgentState(TypedDict, total=False):
     query_status: dict[str, Any]
     result_reference: dict[str, Any]
     approval_context: dict[str, Any]
+    dag_definition: str
+    dag_id: str
+    dag_status: dict[str, Any]
+    dag_run: dict[str, Any]
+    dag_backfill: dict[str, Any]
     response: dict[str, Any]
     _query_ready: bool
     _continue_query: bool

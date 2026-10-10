@@ -56,6 +56,7 @@ def test_cli_keeps_explicit_subcommands() -> None:
 def test_chat_idle_timeout_defaults_to_ten_minutes() -> None:
     args = build_parser().parse_args(["chat"])
 
+    assert args.adapter == "mock"
     assert args.chat_idle_timeout_seconds == 600
     assert args.chat_timeout_warning_seconds == 120
 

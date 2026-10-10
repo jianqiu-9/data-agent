@@ -8,6 +8,10 @@ from data_agent.routing import IntentRouter, LlmIntentRouter, RuleBasedIntentRou
 
 
 def _as_bool(value: str | bool | None) -> bool:
+    """作用：负责 `_as_bool` 对应的处理。
+    上游：LLMSettings.from_environment。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if isinstance(value, bool):
         return value
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
@@ -30,6 +34,10 @@ class LLMSettings(BaseModel):
         *,
         prefix: str = "DATA_AGENT_LLM_",
     ) -> Self:
+        """作用：负责 `from_environment` 对应的处理。
+        上游：HttpPlatformAdapter.from_environment, _add_common_args。
+        下游：_as_bool。
+        """
         import os
 
         values = os.environ if environ is None else environ
@@ -61,6 +69,10 @@ class LLMSettings(BaseModel):
 
 
 def create_langchain_chat_model(settings: LLMSettings) -> Any:
+    """作用：负责 `create_langchain_chat_model` 对应的处理。
+    上游：外部调用方或框架入口（源码中无直接调用点）。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if settings.provider not in {
         "deepseek",
         "openai",
@@ -95,6 +107,10 @@ def build_intent_router(
     *,
     model_factory: Callable[[LLMSettings], Any] | None = None,
 ) -> IntentRouter:
+    """作用：负责 `build_intent_router` 对应的处理。
+    上游：_runtime。
+    下游：无项目内直接调用（通过参数、属性或外部库完成）。
+    """
     if not settings.enabled:
         return RuleBasedIntentRouter()
     factory = model_factory or create_langchain_chat_model

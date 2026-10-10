@@ -25,6 +25,7 @@ llm = [
 
 [project.scripts]
 data-agent = "data_agent.cli:main"
+data-agent-http = "data_agent.http_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

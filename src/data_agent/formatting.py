@@ -211,6 +211,20 @@ def format_sql_analysis(
     )
 
 
+def format_general_sql_optimization() -> str:
+    """Give general tuning steps without claiming facts about a specific query."""
+    return (
+        "通用的 SQL 优化可以按以下顺序排查：\n"
+        "1. 先看 EXPLAIN 和实际耗时，定位全表扫描、大量数据传输、排序或 JOIN 瓶颈。\n"
+        "2. 尽早过滤数据：限制时间范围，利用分区裁剪，避免无条件扫描大表。\n"
+        "3. 只查询需要的列，避免 SELECT *；检查是否读取了不必要的行。\n"
+        "4. 检查过滤、JOIN 和排序字段的索引或相应引擎的加速方式，结合执行计划确认是否生效。\n"
+        "5. 检查 JOIN 条件和数据量，避免笛卡尔积、重复 JOIN 和类型不一致导致的额外开销。\n"
+        "6. 检查统计信息是否过期，必要时更新；对优化前后 SQL 使用相同数据范围复测耗时与结果。\n\n"
+        "具体做法取决于数据库引擎、表结构和执行计划。贴出 SQL、表结构与 EXPLAIN 后可以进一步定位。"
+    )
+
+
 def format_optimization(analysis: dict[str, Any]) -> str:
     """作用：负责 `format_optimization` 对应的处理。
     上游：AgentNodes.optimize_sql。

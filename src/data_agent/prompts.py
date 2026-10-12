@@ -58,6 +58,7 @@ INTENT_SCHEMA_PROMPT = """只输出一个 JSON 对象，不要输出 Markdown：
 - 用户提供 SQL 且要求执行时，选择 query_execute。
 - 用户提供 SQL 且描述慢、扫描大或要求 EXPLAIN 时，选择 sql_optimize。
 - 用户提供 SQL 且要求重写/改写时，选择 sql_rewrite。
+- 用户询问通用 SQL 优化方法，或请求优化 SQL 但尚未提供语句时，选择 sql_optimize，SQL 实体保留 null。
 - 用户只描述业务目标但没有 SQL 时，优先判断 data_discovery。
 - 用户询问资源权限、为什么查不了时，选择 permission_check。
 - 用户明确要求申请、开通、授权时，选择 permission_apply。

@@ -107,6 +107,48 @@ def test_sql_optimizer_uses_explain_and_index_facts() -> None:
     assert "idx_dt_user" in result["response"]["answer"]
 
 
+def test_general_sql_optimization_question_returns_guidance_without_tools() -> None:
+    runtime, _ = make_runtime()
+
+    result = runtime.chat(
+        user_id="u123",
+        session_id="s-general-sql-optimization",
+        message="如何优化 SQL？",
+    )
+
+    assert result["response"]["type"] == "sql_optimize"
+    assert "EXPLAIN" in result["response"]["answer"]
+    assert "索引" in result["response"]["answer"]
+    assert result["tool_calls"] == []
+
+
+def test_general_sql_optimization_guidance_when_user_says_help_me() -> None:
+    runtime, _ = make_runtime()
+
+    result = runtime.chat(
+        user_id="u123",
+        session_id="s-general-sql-help",
+        message="帮我介绍几种 SQL 优化方法",
+    )
+
+    assert "通用的 SQL 优化" in result["response"]["answer"]
+    assert result["tool_calls"] == []
+
+
+def test_sql_optimization_request_without_sql_asks_for_it() -> None:
+    runtime, _ = make_runtime()
+
+    result = runtime.chat(
+        user_id="u123",
+        session_id="s-missing-sql-optimization",
+        message="帮我优化 SQL",
+    )
+
+    assert result["response"]["type"] == "sql_optimize"
+    assert "请提供需要优化的 SQL" in result["response"]["answer"]
+    assert result["tool_calls"] == []
+
+
 def test_approval_context_combines_role_history_and_risk() -> None:
     runtime, adapter = make_runtime()
     ticket = adapter.create_permission_ticket(

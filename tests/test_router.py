@@ -24,6 +24,26 @@ def test_router_detects_sql_optimization() -> None:
     assert result.entities["sql"].startswith("SELECT")
 
 
+def test_router_detects_general_sql_optimization_question() -> None:
+    result = RuleBasedIntentRouter().route("如何优化 SQL？")
+
+    assert result.intent == Intent.SQL_OPTIMIZE
+    assert result.entities["sql"] is None
+
+
+def test_router_detects_general_sql_tuning_methods_question() -> None:
+    result = RuleBasedIntentRouter().route("SQL 提速有哪些方法？")
+
+    assert result.intent == Intent.SQL_OPTIMIZE
+
+
+def test_router_detects_request_to_optimize_missing_sql() -> None:
+    result = RuleBasedIntentRouter().route("帮我优化 SQL")
+
+    assert result.intent == Intent.SQL_OPTIMIZE
+    assert result.entities["sql"] is None
+
+
 def test_router_detects_column_comparison() -> None:
     result = RuleBasedIntentRouter().route(
         "pay_amount 和 settle_amount 有什么区别？"

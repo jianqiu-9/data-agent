@@ -26,6 +26,17 @@ DAG_PATTERN = re.compile(r"\b(dag_[a-zA-Z0-9_-]+)\b", re.IGNORECASE)
 DATE_PATTERN = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
 
 
+def is_general_sql_optimization_question(message: str) -> bool:
+    """Whether the user asks for general SQL tuning guidance."""
+    lower = message.lower()
+    return (
+        "sql" in lower
+        and any(word in lower for word in ("优化", "性能", "提速"))
+        and any(word in lower for word in ("如何", "怎么", "哪些", "方法", "技巧", "思路", "通用", "一般"))
+        and not any(word in lower for word in ("这条", "这段", "这个", "以下", "下面"))
+    )
+
+
 class IntentRouter(Protocol):
     def route(
         self,
@@ -352,6 +363,10 @@ class RuleBasedIntentRouter:
             return Intent.SQL_OPTIMIZE, 0.88, "基于上一轮 SQL 继续性能分析。"
         if has_optimize_word and previous_state.get("generated_sql"):
             return Intent.SQL_REWRITE if "重写" in text or "改写" in text else Intent.SQL_OPTIMIZE, 0.9, "基于上一轮 SQL 继续优化。"
+        if not has_sql and "sql" in lower and (
+            has_optimize_word or has_slow_word or is_general_sql_optimization_question(text)
+        ):
+            return Intent.SQL_OPTIMIZE, 0.9, "检测到 SQL 优化问题，但未提供具体 SQL。"
 
         if any(word in text for word in ["工单状态", "审批好了吗", "审批进度", "工单进度"]):
             return Intent.TICKET_STATUS, 0.95, "检测到工单状态查询。"

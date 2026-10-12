@@ -9,7 +9,7 @@ from langgraph.types import interrupt
 
 from data_agent import formatting
 from data_agent.models import Intent
-from data_agent.routing import IntentRouter, RuleBasedIntentRouter
+from data_agent.routing import IntentRouter, RuleBasedIntentRouter, is_general_sql_optimization_question
 from data_agent.state import AgentState
 from data_agent.tooling import ToolBatch, ToolRegistry
 
@@ -634,6 +634,17 @@ class AgentNodes:
         上游：AgentNodes.rewrite_sql, InMemoryPlatformAdapter.rewrite_sql。
         下游：_ask_for, _batch, _load_sql_context, _response, _sql, call, format_optimization, state_update。
         """
+        if (
+            not rewrite_only
+            and not state.get("entities", {}).get("sql")
+            and is_general_sql_optimization_question(state.get("message", ""))
+        ):
+            return {
+                "response": self._response(
+                    "sql_optimize",
+                    formatting.format_general_sql_optimization(),
+                )
+            }
         sql = self._sql(state)
         if not sql:
             return self._ask_for(

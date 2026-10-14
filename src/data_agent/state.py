@@ -5,6 +5,14 @@ from typing import Annotated, Any, TypedDict
 
 
 class AgentState(TypedDict, total=False):
+    # 当前轮知识与模型候选状态；每次 prepare 清空，避免跨轮沿用旧授权。
+    rag_status: str
+    citations: list[dict[str, Any]]
+    retrieval_results: list[dict[str, Any]]
+    tool_stage: str
+    candidate_call: dict[str, Any]
+    candidate_validation: dict[str, Any]
+    candidate_retry_count: int
     user_id: str
     session_id: str
     task_id: str

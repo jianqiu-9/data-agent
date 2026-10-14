@@ -28,6 +28,12 @@ class AgentNodes:
         self,
         tools: ToolRegistry,
         router: IntentRouter | None = None,
+        knowledge_qa: Any | None = None,
+        access_scope: Any | None = None,
+        tool_candidate_model: Any | None = None,
+        sql_generation_model: Any | None = None,
+        coding_agent: Any | None = None,
+        code_tests: Any | None = None,
     ) -> None:
         """作用：负责 `__init__` 对应的处理。
         上游：PlatformAPIError.__init__。
@@ -35,6 +41,13 @@ class AgentNodes:
         """
         self.tools = tools
         self.router = router or RuleBasedIntentRouter()
+        # knowledge_qa、access_scope 和 tool_candidate_model 均由可信 Runtime 注入。
+        self.knowledge = knowledge_qa
+        self.access_scope = access_scope
+        self.tool_candidate_model = tool_candidate_model
+        self.sql_generation_model = sql_generation_model
+        self.coding_agent = coding_agent
+        self.code_tests = code_tests
 
     def prepare(self, state: AgentState) -> dict[str, Any]:
         """作用：负责 `prepare` 对应的处理。
@@ -48,6 +61,13 @@ class AgentNodes:
             "message": message,
             "business_goal": message,
             "response": {},
+            "rag_status": "",
+            "citations": [],
+            "retrieval_results": [],
+            "tool_stage": "",
+            "candidate_call": {},
+            "candidate_validation": {},
+            "candidate_retry_count": 0,
             "created_at": state.get("created_at") or _now(),
             "updated_at": _now(),
         }
@@ -79,7 +99,44 @@ class AgentNodes:
         """
         batch = self._batch(state)
         goal = state.get("message", "")
-        search = batch.call("search_data_assets", query=goal, limit=5)
+        candidate_state: dict[str, Any] = {}
+        search = None
+        if self.tool_candidate_model is not None:
+            # 模型仅看到 discover 阶段的一项只读契约，不能更改后续权限流程。
+            from data_agent.tool_harness import CandidateError, ToolHarness
+
+            harness = ToolHarness(self.tools)
+            allowed = {"search_data_assets"}
+            prompt = (
+                "只输出单个 JSON 对象 {name, arguments}。当前阶段 discover。"
+                f"可调用 Schema：{harness.schemas(allowed)}。用户目标：{goal}"
+            )
+            candidate_state["tool_stage"] = "discover"
+            try:
+                candidate = self.tool_candidate_model.invoke(prompt)
+                content = getattr(candidate, "content", candidate)
+                executed = harness.execute(
+                    content,
+                    allowed=allowed,
+                    stage="discover",
+                    user_id=state["user_id"],
+                    session_id=state["session_id"],
+                    task_id=state["task_id"],
+                    intent=state.get("intent"),
+                )
+                search = executed.value
+                batch.events.append(executed.event)
+                batch.names.append(executed.tool)
+                candidate_state["candidate_call"] = {"name": executed.tool}
+                candidate_state["candidate_validation"] = {"status": "passed"}
+            except CandidateError as exc:
+                candidate_state["candidate_validation"] = {"status": "rejected", "code": exc.code}
+                if exc.event:
+                    batch.events.append(exc.event)
+            except Exception:
+                candidate_state["candidate_validation"] = {"status": "fallback", "code": "model_unavailable"}
+        if search is None:
+            search = batch.call("search_data_assets", query=goal, limit=5)
         assets = search.get("assets", [])
         for asset in assets[:3]:
             permission = batch.call(
@@ -101,6 +158,9 @@ class AgentNodes:
         )
         top = assets[0] if assets else {}
         answer = formatting.format_asset_search(search)
+        knowledge = self._supporting_knowledge(state, document_type="asset", resource_ids={asset["qualified_name"] for asset in assets[:3]})
+        if knowledge["snippets"]:
+            answer += "\n\n已授权业务资料：\n" + "\n".join(knowledge["snippets"])
         if recommendation.get("recommended_asset"):
             answer += (
                 f"\n\n优先推荐：{recommendation['recommended_asset']}\n"
@@ -118,10 +178,11 @@ class AgentNodes:
                 }
                 for asset in assets[:3]
             ],
-            data={"recommendation": recommendation},
+            data={"recommendation": recommendation, "citations": knowledge["citations"]},
         )
         return {
             "response": response,
+            **candidate_state,
             "identified_resources": [
                 {
                     "type": "table",
@@ -132,6 +193,93 @@ class AgentNodes:
             ],
             **batch.state_update(),
         }
+
+    def knowledge_qa(self, state: AgentState) -> dict[str, Any]:
+        """用当前用户可访问的知识回答；每一轮都重新解析访问范围。"""
+        if self.knowledge is None or self.access_scope is None:
+            answer = "知识问答尚未启用或未配置可信访问范围。"
+            return {"rag_status": "unavailable", "response": self._response("knowledge_qa", answer, data={"rag_status": "unavailable", "citations": []})}
+        try:
+            scope = self.access_scope(state["user_id"])
+            result = self.knowledge.answer(state["message"], scope=scope)
+        except Exception:
+            # 检索服务失败与空结果不同；不把失败伪装成无资料。
+            return {"rag_status": "unavailable", "response": self._response("knowledge_qa", "知识检索当前不可用。", data={"rag_status": "unavailable", "citations": []})}
+        data = {"rag_status": result.status, "citations": result.citations, "index_version": result.index_version}
+        return {"rag_status": result.status, "citations": result.citations, "response": self._response("knowledge_qa", result.answer, data=data)}
+
+    def query_diagnose(self, state: AgentState) -> dict[str, Any]:
+        """排查已有查询 ID；展示平台证据和尚缺的验证材料。"""
+        query_id = state.get("entities", {}).get("query_id")
+        if not query_id:
+            return self._ask_for(state, "query_diagnose", "请提供需要排查的查询 ID。")
+        from data_agent.diagnostics import DiagnosisAgent
+
+        diagnosis = DiagnosisAgent(self.tools).query(query_id, user_id=state["user_id"], session_id=state["session_id"], task_id=state["task_id"])
+        cause_lines = [item["candidate"] + "：" + item["basis"] for item in diagnosis["causes"]]
+        answer = "查询诊断：" + diagnosis["status"] + "。\n" + "\n".join(cause_lines + diagnosis["limitations"])
+        return {"response": self._response("query_diagnose", answer, data={"diagnosis": diagnosis})}
+
+    def job_diagnose(self, state: AgentState) -> dict[str, Any]:
+        """排查 DAG 运行状态；缺少日志或指标时明确标记证据不足。"""
+        dag_id = state.get("entities", {}).get("dag_id")
+        if not dag_id:
+            return self._ask_for(state, "job_diagnose", "请提供需要排查的 DAG ID。")
+        from data_agent.diagnostics import DiagnosisAgent
+
+        diagnosis = DiagnosisAgent(self.tools).job(dag_id, user_id=state["user_id"], session_id=state["session_id"], task_id=state["task_id"])
+        answer = "计算任务诊断：" + diagnosis["status"] + "。\n" + "\n".join(diagnosis["limitations"])
+        return {"response": self._response("job_diagnose", answer, data={"diagnosis": diagnosis})}
+
+    def code_generate(self, state: AgentState) -> dict[str, Any]:
+        """只有可信测试提供者和隔离执行器就绪时才生成并运行代码。"""
+        if self.coding_agent is None or self.code_tests is None:
+            return {"response": self._response("code_generate", "代码执行环境或独立测试尚未配置。", data={"coding": {"status": "unavailable"}})}
+        from data_agent.coding import CodeTask
+
+        goal = state["message"]
+        try:
+            tests = self.code_tests(goal)
+            outcome = self.coding_agent.run(CodeTask(goal=goal, test_source=tests))
+        except Exception:
+            outcome = {"status": "unavailable", "code": "", "stderr": "生成或沙箱执行失败"}
+        answer = "代码测试状态：" + str(outcome["status"])
+        return {"response": self._response("code_generate", answer, data={"coding": outcome})}
+
+    def text_to_sql(self, state: AgentState) -> dict[str, Any]:
+        """用实时表结构生成只读草稿，验证后展示；本节点不执行查询。"""
+        if self.sql_generation_model is None:
+            return {"response": self._response("text_to_sql", "SQL 生成模型尚未启用。", data={"draft_status": "unavailable"})}
+        import json
+
+        batch = self._batch(state)
+        search = batch.call("search_data_assets", query=state["message"], limit=3)
+        assets = search.get("assets", [])[:3]
+        if not assets:
+            return {"response": self._response("text_to_sql", "没有找到可用于生成 SQL 的表，请补充业务对象。", data={"draft_status": "insufficient_schema"}), **batch.state_update()}
+        schemas = [batch.call("get_table_metadata", table=asset["qualified_name"]) for asset in assets]
+        prompt = (
+            "仅输出一条 SELECT 或 WITH 查询 SQL，不要 Markdown。"
+            "只能使用给定表和字段。生成的是草稿，不得执行。\n"
+            + json.dumps({"goal": state["message"], "tables": schemas}, ensure_ascii=False, default=str)[:16000]
+        )
+        try:
+            answer = self.sql_generation_model.invoke(prompt)
+            sql = getattr(answer, "content", answer)
+            if not isinstance(sql, str) or len(sql) > 10000 or not sql.strip():
+                raise ValueError("模型没有返回有效 SQL")
+            sql = sql.strip()
+            validation = batch.call("validate_sql", sql=sql)
+            if not validation.get("valid"):
+                return {"response": self._response("text_to_sql", "生成的 SQL 未通过只读校验，已拒绝展示为可执行草稿。", data={"draft_status": "rejected", "validation": validation}), **batch.state_update()}
+            parsed = batch.call("parse_sql", sql=sql)
+            allowed_tables = {asset["qualified_name"] for asset in assets}
+            if not set(parsed.get("tables", [])).issubset(allowed_tables):
+                return {"response": self._response("text_to_sql", "SQL 引用了未提供元数据的表，已拒绝。", data={"draft_status": "rejected"}), **batch.state_update()}
+        except Exception:
+            return {"response": self._response("text_to_sql", "SQL 生成或校验失败，请补充需求后重试。", data={"draft_status": "unavailable"}), **batch.state_update()}
+        data = {"draft_status": "validated_draft", "sql": sql, "validation": validation, "tables": sorted(allowed_tables), "executed": False}
+        return {"response": self._response("text_to_sql", "已生成并完成平台只读校验的 SQL 草稿，尚未执行：\n" + sql, data=data), "generated_sql": sql, **batch.state_update()}
 
     def explain_table(self, state: AgentState) -> dict[str, Any]:
         """作用：负责 `explain_table` 对应的处理。
@@ -146,12 +294,15 @@ class AgentNodes:
                 "请提供需要解释的表名，例如 dwd_order。",
             )
         batch = self._batch(state)
-        metadata = batch.call("get_table_metadata", table=table)
+        metadata, candidate_state = self._candidate_read(state, batch, stage="table_explain", tool="get_table_metadata", fixed_arguments={"table": table})
         lineage = batch.call("get_data_lineage", table=table)
         answer = formatting.format_table_metadata(metadata)
         upstream = "、".join(lineage.get("lineage", {}).get("upstream", [])) or "无"
         downstream = "、".join(lineage.get("lineage", {}).get("downstream", [])) or "无"
         answer += f"\n\n血缘：\n- 上游：{upstream}\n- 下游：{downstream}"
+        knowledge = self._supporting_knowledge(state, document_type="asset", resource_ids={metadata.get("qualified_name", "")})
+        if knowledge["snippets"]:
+            answer += "\n\n背景资料：\n" + "\n".join(knowledge["snippets"])
         response = self._response(
             "table_explain",
             answer,
@@ -163,9 +314,9 @@ class AgentNodes:
                 {"label": "查权限", "action": "permission_check", "resource": table},
                 {"label": "搜索相似表", "action": "recommend_asset", "resource": table},
             ],
-            data={"metadata": metadata, "lineage": lineage},
+            data={"metadata": metadata, "lineage": lineage, "citations": knowledge["citations"]},
         )
-        return {"response": response, **batch.state_update()}
+        return {"response": response, **candidate_state, **batch.state_update()}
 
     def explain_columns(self, state: AgentState) -> dict[str, Any]:
         """作用：负责 `explain_columns` 对应的处理。
@@ -184,12 +335,9 @@ class AgentNodes:
         batch = self._batch(state)
         metadata = batch.call("get_table_metadata", table=table)
         column_results = []
+        candidate_state: dict[str, Any] = {}
         for column in columns:
-            result = batch.call(
-                "get_column_metadata",
-                table=table,
-                column=column,
-            )
+            result, candidate_state = self._candidate_read(state, batch, stage="column_explain", tool="get_column_metadata", fixed_arguments={"table": table, "column": column})
             if result.get("column"):
                 column_results.append(result["column"])
         answer = formatting.format_columns(table, column_results, columns)
@@ -205,7 +353,7 @@ class AgentNodes:
             ],
             data={"table": metadata, "columns": column_results},
         )
-        return {"response": response, **batch.state_update()}
+        return {"response": response, **candidate_state, **batch.state_update()}
 
     def explain_metric(self, state: AgentState) -> dict[str, Any]:
         """作用：负责 `explain_metric` 对应的处理。
@@ -220,23 +368,27 @@ class AgentNodes:
                 "请提供需要解释的指标名称，例如 GMV 或订单量。",
             )
         batch = self._batch(state)
-        result = batch.call("get_metric_definition", metric=metric_name)
+        result, candidate_state = self._candidate_read(state, batch, stage="metric_explain", tool="get_metric_definition", fixed_arguments={"metric": metric_name})
         if result.get("found"):
             metric = result["metric"]
             answer = formatting.format_metric(metric)
             cards = [{"card_type": "metric_definition", "metric": metric}]
+            knowledge = self._supporting_knowledge(state, document_type="metric", resource_ids={metric_name})
+            if knowledge["snippets"]:
+                answer += "\n\n背景资料（口径以平台实时定义为准）：\n" + "\n".join(knowledge["snippets"])
         else:
-            search = batch.call("search_metrics", query=metric_name, limit=5)
+            search, candidate_state = self._candidate_read(state, batch, stage="metric_search", tool="search_metrics", fixed_arguments={"query": metric_name, "limit": 5})
             metric = None
             answer = "未找到该指标的标准定义，请确认名称。"
             cards = [{"card_type": "metric_search", "metrics": search.get("metrics", [])}]
+            knowledge = {"snippets": [], "citations": []}
         response = self._response(
             "metric_explain",
             answer,
             cards=cards,
-            data={"metric": metric},
+            data={"metric": metric, "citations": knowledge["citations"]},
         )
-        return {"response": response, **batch.state_update()}
+        return {"response": response, **candidate_state, **batch.state_update()}
 
     def check_permission(self, state: AgentState) -> dict[str, Any]:
         """作用：负责 `check_permission` 对应的处理。
@@ -611,6 +763,9 @@ class AgentNodes:
         answer = formatting.format_sql_analysis(
             sql, validation, parsed, context, explain
         )
+        knowledge = self._supporting_knowledge(state, document_type="sql_example", resource_ids=set(parsed.get("tables", [])), sql_dialect=state.get("context", {}).get("sql_dialect"))
+        if knowledge["snippets"]:
+            answer += "\n\n审核 SQL 示例（仅供参考，未执行）：\n" + "\n".join(knowledge["snippets"])
         response = self._response(
             "sql_analyze",
             answer,
@@ -619,7 +774,7 @@ class AgentNodes:
                 {"label": "优化 SQL", "action": "sql_optimize"},
                 {"label": "重写 SQL", "action": "sql_rewrite"},
             ],
-            data=analysis,
+            data={**analysis, "citations": knowledge["citations"]},
         )
         return {
             "response": response,
@@ -890,6 +1045,20 @@ class AgentNodes:
             data={"query": result},
         )
         return {"response": response, **batch.state_update()}
+
+    def analyze_query_result(self, state: AgentState) -> dict[str, Any]:
+        """对已授权查询的完整结果计算摘要，并保留查询 ID 作为证据。"""
+        from data_agent.analysis import DataAnalysisAgent
+
+        measures = state.get("context", {}).get("measures", [])
+        if not isinstance(measures, list) or any(not isinstance(item, str) for item in measures):
+            measures = []
+        analysis = DataAnalysisAgent().summarize(state.get("result_reference") or {}, measures=measures)
+        answer = "数据分析状态：" + analysis["status"] + "。\n查询 ID：" + str(analysis.get("query_id"))
+        if analysis.get("totals"):
+            answer += "\n度量汇总：" + "；".join(f"{name}={value}" for name, value in analysis["totals"].items())
+        answer += "\n" + "；".join(analysis.get("limitations", []))
+        return {"response": self._response("data_analysis", answer, data={"analysis": analysis, "query": state.get("result_reference")})}
 
     def approval_context(self, state: AgentState) -> dict[str, Any]:
         """作用：负责 `approval_context` 对应的处理。
@@ -1284,6 +1453,55 @@ class AgentNodes:
             task_id=state["task_id"],
             intent=state.get("intent"),
         )
+
+    def _candidate_read(self, state: AgentState, batch: ToolBatch, *, stage: str, tool: str, fixed_arguments: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        """尝试阶段受限候选调用；参数或模型失败时保留原固定读路径。"""
+        if self.tool_candidate_model is None:
+            return batch.call(tool, **fixed_arguments), {}
+        from data_agent.tool_harness import CandidateError, ToolHarness
+
+        harness = ToolHarness(self.tools)
+        candidate_state: dict[str, Any] = {"tool_stage": stage}
+        prompt = (
+            "只输出单个 JSON 对象 {name, arguments}。"
+            f"当前阶段：{stage}；允许 Schema：{harness.schemas({tool})}。"
+            f"已确认参数：{fixed_arguments}；用户问题：{state.get('message', '')}"
+        )
+        try:
+            response = self.tool_candidate_model.invoke(prompt)
+            content = getattr(response, "content", response)
+            executed = harness.execute(content, allowed={tool}, stage=stage, user_id=state["user_id"], session_id=state["session_id"], task_id=state["task_id"], intent=state.get("intent"), required_arguments=fixed_arguments)
+            batch.events.append(executed.event)
+            batch.names.append(executed.tool)
+            candidate_state["candidate_call"] = {"name": executed.tool}
+            candidate_state["candidate_validation"] = {"status": "passed"}
+            return executed.value, candidate_state
+        except CandidateError as exc:
+            candidate_state["candidate_validation"] = {"status": "rejected", "code": exc.code}
+            if exc.event:
+                batch.events.append(exc.event)
+        except Exception:
+            candidate_state["candidate_validation"] = {"status": "fallback", "code": "model_unavailable"}
+        return batch.call(tool, **fixed_arguments), candidate_state
+
+    def _supporting_knowledge(self, state: AgentState, *, document_type: str, resource_ids: set[str], sql_dialect: str | None = None) -> dict[str, Any]:
+        """仅附加映射到实时平台对象的本轮授权资料，不让文档改写平台事实。"""
+        empty: dict[str, Any] = {"snippets": [], "citations": []}
+        if self.knowledge is None or self.access_scope is None or not resource_ids:
+            return empty
+        try:
+            scope = self.access_scope(state["user_id"])
+            found = self.knowledge.index.search(state.get("message", ""), scope=scope, document_type=document_type, sql_dialect=sql_dialect)
+        except Exception:
+            return empty
+        chunks = [chunk for chunk in found.results if set(chunk.resource_ids) & resource_ids][:3]
+        return {
+            "snippets": [f"[{index}] {chunk.content[:300]}" for index, chunk in enumerate(chunks, 1)],
+            "citations": [
+                {"citation_id": str(index), "document_id": chunk.document_id, "chunk_id": chunk.chunk_id, "title": chunk.title, "section": chunk.section, "source_uri": chunk.source_uri, "version": chunk.version}
+                for index, chunk in enumerate(chunks, 1)
+            ],
+        }
 
     def _resource_name(self, state: AgentState) -> str | None:
         """作用：负责 `_resource_name` 对应的处理。

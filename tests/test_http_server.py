@@ -23,8 +23,8 @@ class FakeRuntime:
 
 
 @contextmanager
-def running_server(runtime, token=None):
-    server = create_server(runtime, host="127.0.0.1", port=0, token=token)
+def running_server(runtime, token=None, user_tokens=None):
+    server = create_server(runtime, host="127.0.0.1", port=0, token=token, user_tokens=user_tokens)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -81,6 +81,16 @@ def test_token_rejects_unauthorized_requests():
         status, _ = request(base, "/v1/chat", {"user_id": "u123", "message": "hello"})
         assert status == 401
         status, _ = request(base, "/v1/chat", {"user_id": "u123", "message": "hello"}, token="secret")
+        assert status == 200
+    assert len(runtime.calls) == 1
+
+
+def test_user_token_binds_authenticated_principal() -> None:
+    runtime = FakeRuntime()
+    with running_server(runtime, user_tokens={"secret-u": "u123"}) as base:
+        status, _ = request(base, "/v1/chat", {"user_id": "admin", "message": "hello"}, token="secret-u")
+        assert status == 403
+        status, _ = request(base, "/v1/chat", {"user_id": "u123", "message": "hello"}, token="secret-u")
         assert status == 200
     assert len(runtime.calls) == 1
 

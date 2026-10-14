@@ -580,15 +580,15 @@ export DATA_AGENT_CHAT_TIMEOUT_WARNING_SECONDS=120
 ## 供其他平台通过 HTTP 调用
 
 服务启动后复用同一个 `DataAgentRuntime`，用 `session_id` 维持多轮对话和人工确认中断。
-默认只监听本机。让其他机器访问时，设置访问令牌并指定监听地址；外部网络入口应由
-反向代理提供 HTTPS。
+默认只监听本机。让其他机器访问时，配置令牌到用户 ID 的映射并指定监听地址；
+外部网络入口应由反向代理提供 HTTPS。共享令牌仅用于本机调试。
 
 ```bash
 # 安装后启动；默认使用 mock 数据平台
 .venv/bin/data-agent-http --host 127.0.0.1 --port 8000
 
-# 对外监听时必须配置令牌
-export DATA_AGENT_HTTP_TOKEN=replace-with-a-long-random-token
+# 对外监听时，令牌必须绑定到可信用户 ID
+export DATA_AGENT_HTTP_USER_TOKENS_JSON='{"replace-with-a-long-random-token":"u123"}'
 .venv/bin/data-agent-http --host 0.0.0.0 --port 8000
 ```
 
@@ -600,7 +600,7 @@ export DATA_AGENT_HTTP_TOKEN=replace-with-a-long-random-token
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/chat \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $DATA_AGENT_HTTP_TOKEN" \
+  -H 'Authorization: Bearer replace-with-a-long-random-token' \
   -d '{"user_id":"u123","message":"dwd_order 是干嘛的？","env":"prod"}'
 ```
 
@@ -611,7 +611,7 @@ curl -X POST http://127.0.0.1:8000/v1/chat \
 ```bash
 curl -X POST http://127.0.0.1:8000/v1/resume \
   -H 'Content-Type: application/json' \
-  -H "Authorization: Bearer $DATA_AGENT_HTTP_TOKEN" \
+  -H 'Authorization: Bearer replace-with-a-long-random-token' \
   -d '{"user_id":"u123","session_id":"s-...","decision":{"approved":true}}'
 ```
 
@@ -619,6 +619,32 @@ curl -X POST http://127.0.0.1:8000/v1/resume \
 `{"role_id":"r_sales_analyst"}`。`GET /health` 返回健康状态；配置令牌时该接口也需
 携带认证头。请求体最多 1 MiB。会话检查点、用户归属和中断记录保存在服务进程内存中，
 重启后不能恢复。跨重启恢复需要同时持久化 Checkpointer 和会话元数据。
+令牌映射中的用户 ID 必须与请求体 `user_id` 相同；生产环境由身份系统注入映射，
+不要把示例令牌提交到仓库。
+
+## 三份增量 PRD 的本地实现
+
+实现范围和待验收项见 [实现状态](docs/implementation_status.md)。以下能力默认关闭，
+需要按场景显式启用：
+
+```bash
+# 清单中的每项包含 path 和 metadata；metadata 包含租户、策略、文档 ID、版本等字段。
+.venv/bin/python main.py ask '怎么申请权限？' \
+  --knowledge-manifest /absolute/path/manifest.json \
+  --knowledge-root /absolute/path/knowledge \
+  --knowledge-tenant demo \
+  --knowledge-policy public
+
+# 使用已配置的 LLM 生成只读 SQL 草稿；不会自动执行。
+.venv/bin/python main.py ask '用 SQL 统计订单数' --llm-enabled --text-to-sql-enabled
+
+# 仅在资产/元数据只读阶段启用模型候选工具调用。
+.venv/bin/python main.py ask '查找订单表' --llm-enabled --tool-calling-enabled
+```
+
+Coding Agent 还需要 `--sandbox-image`（固定为 `name@sha256:...`）和
+`--coding-test-file`（由启动者维护的独立测试）。本地未配置模型、知识库或 Docker 时，
+相应能力保持关闭。查询与作业排障的日志、指标接口需要平台提供并声明可选能力。
 
 ## 连接真实平台
 
@@ -769,6 +795,7 @@ runtime.resume(
 - LLM 环境配置、模型构建、JSON 解析和失败回退。
 - `uml/all.puml` 全流程时序图关键节点。
 - CLI 真实平台适配器配置。
+- 新增知识检索、工具候选校验、只读计划、数据分析、排障、代码沙箱契约和 HTTP 用户身份绑定。
 
 ## 生产接入清单
 
@@ -782,4 +809,4 @@ runtime.resume(
 8. 对敏感字段实施脱敏、最小化和访问审计。
 9. 对 Prompt 和模型进行版本管理及离线评测。
 10. 监控任务完成率、权限自助解决率、SQL 优化采纳率和工具错误率。
-11. 在网关层校验 `X-User-Id` 与调用身份的一致性，防止用户伪造。
+11. 在网关层将认证主体与用户 ID 绑定；当前 HTTP 入口支持静态令牌到用户 ID 映射。

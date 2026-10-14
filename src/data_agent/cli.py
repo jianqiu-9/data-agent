@@ -219,6 +219,33 @@ def _runtime(args: argparse.Namespace) -> DataAgentRuntime:
         minimum_confidence=args.llm_min_confidence,
     )
     router = build_intent_router(llm_settings)
+    # RAG 仅在显式指定清单、受控根目录、租户和策略时启用。
+    knowledge_qa = None
+    access_scope = None
+    if args.knowledge_manifest:
+        if not all((args.knowledge_root, args.knowledge_tenant, args.knowledge_policy)):
+            raise ValueError("启用知识库需要 --knowledge-root、--knowledge-tenant 和 --knowledge-policy")
+        from pathlib import Path
+        from data_agent.rag import AccessScope, KnowledgeQA, LLMAnswerModel, load_knowledge_index
+
+        answer_model = LLMAnswerModel(router.model) if hasattr(router, "model") else None
+        knowledge_qa = KnowledgeQA(load_knowledge_index(Path(args.knowledge_manifest), allowed_root=Path(args.knowledge_root)), model=answer_model)
+        # 此本地 CLI 策略由启动者配置；HTTP 服务默认不传这些参数。
+        access_scope = lambda _user_id: AccessScope(args.knowledge_tenant, frozenset(args.knowledge_policy))
+    candidate_model = getattr(router, "model", None) if args.tool_calling_enabled else None
+    sql_generation_model = getattr(router, "model", None) if args.text_to_sql_enabled else None
+    coding_agent = None
+    code_tests = None
+    if args.sandbox_image or args.coding_test_file:
+        if not (args.sandbox_image and args.coding_test_file and hasattr(router, "model")):
+            raise ValueError("Coding Agent 需要启用 LLM 并同时配置 --sandbox-image 与 --coding-test-file")
+        from data_agent.coding import CodingAgent, DockerSandbox, LLMCodeGenerator
+        from pathlib import Path
+
+        # 独立测试由启动者从本地受控文件配置，用户聊天内容不能替换。
+        test_source = Path(args.coding_test_file).read_text(encoding="utf-8")
+        coding_agent = CodingAgent(LLMCodeGenerator(router.model), DockerSandbox(image=args.sandbox_image))
+        code_tests = lambda _goal: test_source
     if args.adapter == "http":
         base_url = args.platform_base_url or os.environ.get(
             "DATA_PLATFORM_BASE_URL"
@@ -234,6 +261,12 @@ def _runtime(args: argparse.Namespace) -> DataAgentRuntime:
                 token=token,
             ),
             router=router,
+            knowledge_qa=knowledge_qa,
+            access_scope=access_scope,
+            tool_candidate_model=candidate_model,
+            sql_generation_model=sql_generation_model,
+            coding_agent=coding_agent,
+            code_tests=code_tests,
         )
     random_seed = None
     if args.mock_random_seed is not None:
@@ -241,6 +274,12 @@ def _runtime(args: argparse.Namespace) -> DataAgentRuntime:
     return DataAgentRuntime(
         InMemoryPlatformAdapter(random_seed=random_seed),
         router=router,
+        knowledge_qa=knowledge_qa,
+        access_scope=access_scope,
+        tool_candidate_model=candidate_model,
+        sql_generation_model=sql_generation_model,
+        coding_agent=coding_agent,
+        code_tests=code_tests,
     )
 
 
@@ -380,6 +419,14 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     下游：from_environment。
     """
     llm_defaults = LLMSettings.from_environment()
+    parser.add_argument("--knowledge-manifest", help="显式知识文档 JSON 清单")
+    parser.add_argument("--knowledge-root", help="知识文件受控根目录")
+    parser.add_argument("--knowledge-tenant", help="本地知识库租户 ID")
+    parser.add_argument("--knowledge-policy", action="append", help="本地授权阅读策略，可重复")
+    parser.add_argument("--tool-calling-enabled", action="store_true", help="在只读资产发现阶段启用模型候选工具调用")
+    parser.add_argument("--text-to-sql-enabled", action="store_true", help="启用自然语言生成只读 SQL 草稿")
+    parser.add_argument("--sandbox-image", help="Coding 沙箱固定到 sha256 摘要的镜像")
+    parser.add_argument("--coding-test-file", help="Coding 独立测试的本地文件")
     parser.add_argument("--user-id", default="u123", help="当前用户 ID")
     parser.add_argument("--session-id", help="对话会话 ID")
     parser.add_argument(

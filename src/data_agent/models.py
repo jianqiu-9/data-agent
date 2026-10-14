@@ -8,6 +8,13 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class Intent(StrEnum):
+    # KNOWLEDGE_QA 只回答授权知识，不能代替权限申请或查询执行。
+    KNOWLEDGE_QA = "knowledge_qa"
+    QUERY_DIAGNOSE = "query_diagnose"
+    JOB_DIAGNOSE = "job_diagnose"
+    DATA_ANALYSIS = "data_analysis"
+    CODE_GENERATE = "code_generate"
+    TEXT_TO_SQL = "text_to_sql"
     DATA_DISCOVERY = "data_discovery"
     TABLE_EXPLAIN = "table_explain"
     COLUMN_EXPLAIN = "column_explain"

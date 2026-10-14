@@ -49,6 +49,9 @@ TOOL_NAMES = (
     "backfill_dag",
 )
 
+# 新平台能力按需注册，旧适配器无需实现；执行仍经过同一审计入口。
+OPTIONAL_TOOL_NAMES = ("get_job_metrics", "search_logs", "get_query_profile")
+
 
 @dataclass(frozen=True)
 class ToolExecution:
@@ -71,8 +74,9 @@ class ToolRegistry:
         self._audit_sink = audit_sink
         self._tools = {
             name: getattr(services, name)
-            for name in TOOL_NAMES
+            for name in (*TOOL_NAMES, *OPTIONAL_TOOL_NAMES)
             if callable(getattr(services, name, None))
+            and (name in TOOL_NAMES or name in getattr(services, "supported_optional_tools", OPTIONAL_TOOL_NAMES))
         }
         missing = sorted(set(TOOL_NAMES) - set(self._tools))
         if missing:
@@ -87,6 +91,19 @@ class ToolRegistry:
         """
         return tuple(sorted(self._tools))
 
+    def record_candidate_rejection(self, *, user_id: str, session_id: str, task_id: str, intent: str | None, stage: str, code: str) -> dict[str, Any]:
+        """记录模型候选拒绝原因，不保存候选参数或敏感正文。"""
+        event = {
+            "timestamp": datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds"),
+            "user_id": user_id, "session_id": session_id, "task_id": task_id,
+            "intent": intent, "stage": stage, "contract_version": "1",
+            "candidate_validation": "rejected", "error_code": code,
+            "execution_status": "not_started",
+        }
+        if self._audit_sink:
+            self._audit_sink(event)
+        return event
+
     def invoke(
         self,
         tool: str,
@@ -96,6 +113,7 @@ class ToolRegistry:
         session_id: str,
         task_id: str,
         intent: str | None = None,
+        audit_context: dict[str, Any] | None = None,
     ) -> ToolExecution:
         """作用：负责 `invoke` 对应的处理。
         上游：DataAgentRuntime.chat, DataAgentRuntime.resume, LlmIntentRouter.route, ToolBatch.call。
@@ -126,6 +144,7 @@ class ToolRegistry:
                     response=result,
                     latency_ms=(time.perf_counter() - started) * 1000,
                     error=None,
+                    audit_context=audit_context,
                 ),
             )
         except Exception as exc:
@@ -143,6 +162,7 @@ class ToolRegistry:
                     response=None,
                     latency_ms=(time.perf_counter() - started) * 1000,
                     error=error,
+                    audit_context=audit_context,
                 )
                 if self._audit_sink:
                     self._audit_sink(event)
@@ -177,6 +197,8 @@ class ToolRegistry:
             "latency_ms": round(kwargs["latency_ms"], 3),
             "error": kwargs["error"],
         }
+        # audit_context 只记录服务端确定的阶段和契约版本，不接受模型自报字段。
+        event.update(kwargs.get("audit_context") or {})
         if self._audit_sink:
             self._audit_sink(event)
         return event

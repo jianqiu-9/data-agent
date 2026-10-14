@@ -49,6 +49,15 @@ def test_search_assets_calls_declared_endpoint() -> None:
     assert requests[0].url.params["limit"] == "3"
 
 
+def test_optional_monitoring_tool_requires_explicit_capability() -> None:
+    adapter, requests = make_adapter(lambda request: httpx.Response(200, json={"run_id": "r1"}))
+    assert "get_job_metrics" not in ToolRegistry(adapter).names
+    adapter.supported_optional_tools = frozenset({"get_job_metrics"})
+    result = ToolRegistry(adapter).invoke("get_job_metrics", {"dag_id": "dag_orders"}, user_id="u123", session_id="s", task_id="t")
+    assert result.result["run_id"] == "r1"
+    assert requests[0].url.path == "/api/v1/dags/dag_orders/metrics"
+
+
 def test_permission_check_posts_expected_payload() -> None:
     adapter, requests = make_adapter(
         lambda request: httpx.Response(200, json={"has_permission": False})

@@ -33,7 +33,7 @@ SYSTEM_PROMPT = """你是企业数据平台 Data Agent。
 
 INTENT_SCHEMA_PROMPT = """只输出一个 JSON 对象，不要输出 Markdown：
 {
-  "intent": "data_discovery|table_explain|column_explain|metric_explain|permission_check|permission_apply|permission_history|ticket_status|role_explain|sql_analyze|sql_optimize|sql_rewrite|query_execute|query_explain|approval_context|approval_risk|dag_generate|dag_validate|dag_submit|dag_trigger|dag_status|dag_backfill|unknown",
+  "intent": "knowledge_qa|query_diagnose|job_diagnose|data_analysis|code_generate|text_to_sql|data_discovery|table_explain|column_explain|metric_explain|permission_check|permission_apply|permission_history|ticket_status|role_explain|sql_analyze|sql_optimize|sql_rewrite|query_execute|query_explain|approval_context|approval_risk|dag_generate|dag_validate|dag_submit|dag_trigger|dag_status|dag_backfill|unknown",
   "confidence": 0.0,
   "entities": {
     "resources": [],
@@ -62,6 +62,7 @@ INTENT_SCHEMA_PROMPT = """只输出一个 JSON 对象，不要输出 Markdown：
 - 用户只描述业务目标但没有 SQL 时，优先判断 data_discovery。
 - 用户询问资源权限、为什么查不了时，选择 permission_check。
 - 用户明确要求申请、开通、授权时，选择 permission_apply。
+- 用户询问平台指南或“怎么申请权限”时，选择 knowledge_qa；实际提交申请仍选择 permission_apply。
 - 不得根据常识填写权限、资源或表结构；实体无法确认时保留 null。
 """
 
@@ -91,6 +92,15 @@ _OUTPUT_RULES = """
 
 
 PROMPT_REGISTRY: dict[Intent, PromptTemplate] = {
+    Intent.TEXT_TO_SQL: PromptTemplate("text_to_sql", "$system_prompt\n任务：根据已检索的表结构生成只读 SQL 草稿。\n需求：$message\n必须经平台校验后才可展示，不能声称已经执行。"),
+    Intent.CODE_GENERATE: PromptTemplate("code_generate", "$system_prompt\n任务：生成数据处理代码，并通过独立沙箱测试。\n需求：$message\n不得声称未运行的代码已经通过测试。"),
+    Intent.DATA_ANALYSIS: PromptTemplate("data_analysis", "$system_prompt\n任务：运行已验证且已授权的只读 SQL，并依据结果生成可复算摘要。\n问题：$message\n不完整结果不能宣称全量。"),
+    Intent.QUERY_DIAGNOSE: PromptTemplate("query_diagnose", "$system_prompt\n任务：基于平台查询状态与计划排障。\n问题：$message\n缺少日志或指标时说明证据不足。"),
+    Intent.JOB_DIAGNOSE: PromptTemplate("job_diagnose", "$system_prompt\n任务：基于计算任务状态、日志与指标排障。\n问题：$message\n不得根据状态猜测根因。"),
+    Intent.KNOWLEDGE_QA: PromptTemplate(
+        "knowledge_qa",
+        "$system_prompt\n任务：基于本轮授权证据回答平台知识问题。\n问题：$message\n只引用本轮授权资料，缺少证据时说明未知。",
+    ),
     Intent.DATA_DISCOVERY: PromptTemplate(
         "data_discovery",
         """$system_prompt

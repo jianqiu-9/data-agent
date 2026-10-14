@@ -116,6 +116,9 @@ class PlatformEndpoints:
     DAG_TRIGGER = "/api/v1/dags/{dag_id}/trigger"
     DAG_STATUS = "/api/v1/dags/{dag_id}"
     DAG_BACKFILL = "/api/v1/dags/{dag_id}/backfill"
+    JOB_METRICS = "/api/v1/dags/{dag_id}/metrics"
+    SEARCH_LOGS = "/api/v1/observability/logs"
+    QUERY_PROFILE = "/api/v1/tools/query/{query_id}/profile"
 
 
 TOOL_ENDPOINTS: dict[str, tuple[str, str]] = {
@@ -185,6 +188,7 @@ class HttpPlatformAdapter(
         user_agent: str = "data-agent/0.2",
         client: httpx.Client | None = None,
         user_id: str | None = None,
+        supported_optional_tools: frozenset[str] = frozenset(),
     ) -> None:
         """作用：负责 `__init__` 对应的处理。
         上游：PlatformAPIError.__init__。
@@ -205,6 +209,8 @@ class HttpPlatformAdapter(
             f"data_agent_http_user_{id(self)}",
             default=user_id,
         )
+        # 只有平台明确声明支持的可选监控工具才进入工具注册表。
+        self.supported_optional_tools = supported_optional_tools
 
     @classmethod
     def from_environment(cls) -> HttpPlatformAdapter:
@@ -807,6 +813,20 @@ class HttpPlatformAdapter(
             ),
             json=request.payload(),
         )
+
+    def get_job_metrics(self, dag_id: str) -> dict[str, Any]:
+        """读取计算任务指标；平台需返回对应 run_id 供诊断关联。"""
+        return self._get(PlatformEndpoints.JOB_METRICS.format(dag_id=self._quote(dag_id)))
+
+    def search_logs(self, resource_type: str, resource_id: str, limit: int = 100) -> dict[str, Any]:
+        """按任务或查询 ID 查询有限日志，不允许无边界全量读取。"""
+        if resource_type not in {"job", "query"} or not 1 <= limit <= 100:
+            raise ValueError("日志资源类型或条数无效")
+        return self._get(PlatformEndpoints.SEARCH_LOGS, params={"resource_type": resource_type, "resource_id": resource_id, "limit": limit})
+
+    def get_query_profile(self, query_id: str) -> dict[str, Any]:
+        """读取查询运行画像，用于区别计划估计与真实执行指标。"""
+        return self._get(PlatformEndpoints.QUERY_PROFILE.format(query_id=self._quote(query_id)))
 
     def _get(
         self,

@@ -9,13 +9,28 @@ from langgraph.types import Command
 
 from data_agent.models import Intent
 from data_agent.nodes import AgentNodes
+from data_agent.coding import CodingAgent
+from data_agent.rag import AccessScope, KnowledgeQA
 from data_agent.routing import IntentRouter
 from data_agent.services import PlatformServices
 from data_agent.state import AgentState
 from data_agent.tooling import ToolRegistry
+from typing import Protocol
+
+
+class CandidateModel(Protocol):
+    """模型候选调用接口，便于注入真实 LLM 或离线测试模型。"""
+
+    def invoke(self, prompt: str) -> Any: ...
 
 
 INTENT_TO_NODE = {
+    Intent.TEXT_TO_SQL.value: "text_to_sql",
+    Intent.CODE_GENERATE.value: "code_generate",
+    Intent.DATA_ANALYSIS.value: "prepare_query",
+    Intent.QUERY_DIAGNOSE.value: "query_diagnose",
+    Intent.JOB_DIAGNOSE.value: "job_diagnose",
+    Intent.KNOWLEDGE_QA.value: "knowledge_qa",
     Intent.DATA_DISCOVERY.value: "discover_assets",
     Intent.TABLE_EXPLAIN.value: "explain_table",
     Intent.COLUMN_EXPLAIN.value: "explain_columns",
@@ -48,17 +63,28 @@ def build_data_agent_graph(
     checkpointer: BaseCheckpointSaver | None = None,
     audit_sink: Callable[[dict[str, Any]], None] | None = None,
     router: IntentRouter | None = None,
+    knowledge_qa: KnowledgeQA | None = None,
+    access_scope: Callable[[str], AccessScope] | None = None,
+    tool_candidate_model: CandidateModel | None = None,
+    sql_generation_model: CandidateModel | None = None,
+    coding_agent: CodingAgent | None = None,
+    code_tests: Callable[[str], str] | None = None,
 ):
     """作用：负责 `build_data_agent_graph` 对应的处理。
     上游：DataAgentRuntime.__init__。
     下游：无项目内直接调用（通过参数、属性或外部库完成）。
     """
     registry = ToolRegistry(services, audit_sink=audit_sink)
-    nodes = AgentNodes(registry, router=router)
+    nodes = AgentNodes(registry, router=router, knowledge_qa=knowledge_qa, access_scope=access_scope, tool_candidate_model=tool_candidate_model, sql_generation_model=sql_generation_model, coding_agent=coding_agent, code_tests=code_tests)
     builder = StateGraph(AgentState)
 
     builder.add_node("prepare", nodes.prepare)
     builder.add_node("route", nodes.route)
+    builder.add_node("knowledge_qa", nodes.knowledge_qa)
+    builder.add_node("query_diagnose", nodes.query_diagnose)
+    builder.add_node("job_diagnose", nodes.job_diagnose)
+    builder.add_node("code_generate", nodes.code_generate)
+    builder.add_node("text_to_sql", nodes.text_to_sql)
     builder.add_node("discover_assets", nodes.discover_assets)
     builder.add_node("explain_table", nodes.explain_table)
     builder.add_node("explain_columns", nodes.explain_columns)
@@ -73,6 +99,7 @@ def build_data_agent_graph(
     builder.add_node("rewrite_sql", nodes.rewrite_sql)
     builder.add_node("prepare_query", nodes.prepare_query)
     builder.add_node("execute_query", nodes.execute_query)
+    builder.add_node("analyze_query_result", nodes.analyze_query_result)
     builder.add_node("explain_query_result", nodes.explain_query_result)
     builder.add_node("approval_context", nodes.approval_context)
     builder.add_node("approval_risk", nodes.approval_risk)
@@ -90,6 +117,12 @@ def build_data_agent_graph(
     builder.add_conditional_edges("route", _route_intent, INTENT_TO_NODE)
 
     for node in (
+        "knowledge_qa",
+        "query_diagnose",
+        "job_diagnose",
+        "code_generate",
+        "text_to_sql",
+        "analyze_query_result",
         "discover_assets",
         "explain_table",
         "explain_columns",
@@ -138,7 +171,7 @@ def build_data_agent_graph(
             "finish": "finalize",
         },
     )
-    builder.add_edge("execute_query", "finalize")
+    builder.add_conditional_edges("execute_query", _after_query_execute, {"analyze": "analyze_query_result", "finish": "finalize"})
     builder.add_edge("finalize", END)
 
     return builder.compile(checkpointer=checkpointer or MemorySaver())
@@ -162,6 +195,13 @@ def _after_query_prepare(state: AgentState) -> str:
         return "execute"
     if state.get("_permission_offer_required"):
         return "request_permission"
+    return "finish"
+
+
+def _after_query_execute(state: AgentState) -> str:
+    """分析意图在查询成功后增加结果验证；其他查询维持原流程。"""
+    if state.get("intent") == Intent.DATA_ANALYSIS.value and state.get("query_status", {}).get("status") == "succeeded":
+        return "analyze"
     return "finish"
 
 
@@ -196,6 +236,12 @@ class DataAgentRuntime:
         checkpointer: BaseCheckpointSaver | None = None,
         audit_sink: Callable[[dict[str, Any]], None] | None = None,
         router: IntentRouter | None = None,
+        knowledge_qa: KnowledgeQA | None = None,
+        access_scope: Callable[[str], AccessScope] | None = None,
+        tool_candidate_model: CandidateModel | None = None,
+        sql_generation_model: CandidateModel | None = None,
+        coding_agent: CodingAgent | None = None,
+        code_tests: Callable[[str], str] | None = None,
     ) -> None:
         """作用：负责 `__init__` 对应的处理。
         上游：PlatformAPIError.__init__。
@@ -206,6 +252,12 @@ class DataAgentRuntime:
             checkpointer=checkpointer,
             audit_sink=audit_sink,
             router=router,
+            knowledge_qa=knowledge_qa,
+            access_scope=access_scope,
+            tool_candidate_model=tool_candidate_model,
+            sql_generation_model=sql_generation_model,
+            coding_agent=coding_agent,
+            code_tests=code_tests,
         )
         self._configs: dict[str, dict[str, Any]] = {}
 

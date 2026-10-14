@@ -24,6 +24,7 @@ TICKET_PATTERN = re.compile(r"\b(T\d{8,})\b", re.IGNORECASE)
 DURATION_PATTERN = re.compile(r"(\d+)\s*(?:天|日|days?)", re.IGNORECASE)
 DAG_PATTERN = re.compile(r"\b(dag_[a-zA-Z0-9_-]+)\b", re.IGNORECASE)
 DATE_PATTERN = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
+QUERY_ID_PATTERN = re.compile(r"\b(Q\d{8,})\b", re.IGNORECASE)
 
 
 def is_general_sql_optimization_question(message: str) -> bool:
@@ -75,6 +76,7 @@ class RuleBasedIntentRouter:
         role_id = self._extract_role(text)
         ticket_id = self._extract_ticket(text)
         dag_id = self._extract_dag_id(text)
+        query_match = QUERY_ID_PATTERN.search(text)
         dates = DATE_PATTERN.findall(text)
         action = self._extract_action(lower)
         env = self._extract_env(lower, context)
@@ -94,6 +96,7 @@ class RuleBasedIntentRouter:
             "role_id": role_id,
             "ticket_id": ticket_id,
             "dag_id": dag_id,
+            "query_id": query_match.group(1) if query_match else None,
             "logical_date": dates[0] if dates else None,
             "start_date": dates[0] if len(dates) > 1 else None,
             "end_date": dates[1] if len(dates) > 1 else None,
@@ -328,6 +331,15 @@ class RuleBasedIntentRouter:
         has_execute_word = any(word in lower for word in ["执行", "跑一下", "运行", "查询一下"])
 
         has_dag_word = "dag" in lower or "工作流" in text
+        if not has_sql and "sql" in lower and any(word in text for word in ["帮我写", "生成", "写一条", "编写"]):
+            return Intent.TEXT_TO_SQL, 0.94, "检测到自然语言生成 SQL 请求。"
+        if any(word in lower for word in ["python", "pyspark", "代码", "脚本"]) and any(word in text for word in ["生成", "编写", "写一段", "写一个"]):
+            return Intent.CODE_GENERATE, 0.91, "检测到数据处理代码生成任务。"
+        # 排障请求优先于普通 DAG 状态/SQL 优化路由，避免把 ID 当成 SQL。
+        if QUERY_ID_PATTERN.search(text) and any(word in text for word in ["排查", "故障", "为什么慢", "失败原因"]):
+            return Intent.QUERY_DIAGNOSE, 0.97, "检测到查询 ID 排障请求。"
+        if has_dag_word and any(word in text for word in ["排查", "故障", "失败原因", "为什么失败"]):
+            return Intent.JOB_DIAGNOSE, 0.95, "检测到计算任务排障请求。"
         if has_dag_word and any(word in text for word in ["回填", "backfill"]):
             return Intent.DAG_BACKFILL, 0.97, "检测到 DAG 回填请求。"
         if has_dag_word and any(
@@ -353,6 +365,8 @@ class RuleBasedIntentRouter:
 
         if has_sql and has_optimize_word:
             return Intent.SQL_REWRITE if "重写" in text or "改写" in text else Intent.SQL_OPTIMIZE, 0.97, "检测到 SQL 和优化要求。"
+        if has_sql and any(word in text for word in ["分析这条", "分析结果", "分析这段 SQL"]):
+            return Intent.DATA_ANALYSIS, 0.96, "检测到基于 SQL 的数据分析任务。"
         if has_sql and has_slow_word:
             return Intent.SQL_OPTIMIZE, 0.96, "检测到 SQL 和性能问题描述。"
         if has_sql and has_execute_word:
@@ -376,7 +390,11 @@ class RuleBasedIntentRouter:
             return Intent.APPROVAL_CONTEXT, 0.94, "检测到审批上下文请求。"
 
         if any(word in text for word in ["申请权限", "帮我申请", "开通权限", "开权限", "申请一下", "授权"]):
+            if any(word in text for word in ["怎么", "如何", "流程", "步骤", "指南", "文档"]):
+                return Intent.KNOWLEDGE_QA, 0.95, "用户询问权限申请知识。"
             return Intent.PERMISSION_APPLY, 0.96, "检测到权限申请意图。"
+        if any(word in text for word in ["指南", "文档", "平台怎么", "平台如何", "FAQ", "知识库"]):
+            return Intent.KNOWLEDGE_QA, 0.89, "检测到平台知识问答。"
         if "权限" in text and any(word in text for word in ["历史", "之前", "以前", "曾经"]):
             return Intent.PERMISSION_HISTORY, 0.94, "检测到历史权限查询。"
         if any(word in text for word in ["为什么查不了", "没有权限", "权限吗", "有没有权限", "查权限", "能查"]):

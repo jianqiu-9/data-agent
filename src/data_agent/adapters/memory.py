@@ -1335,6 +1335,9 @@ class InMemoryPlatformAdapter:
             "query_id": query_id,
             "status": result["status"],
             "elapsed_ms": result["elapsed_ms"],
+            # 查询归属和 SQL 由模拟平台返回，供排障时重新校验用户与计划。
+            "user_id": result["user_id"],
+            "sql": result["sql"],
         }
 
     def get_query_result(self, query_id: str) -> dict[str, Any]:
